@@ -19,11 +19,11 @@ GOOGLE_SHEET_WEBHOOK = os.getenv("GOOGLE_SHEET_WEBHOOK", "")
 # ══════════════════════════════════════════════════════
 # TRADING PARAMETERS
 # ══════════════════════════════════════════════════════
-BANKROLL = 50.0
+BANKROLL = 9.0
 KELLY_FRACTION = 0.33          # ⅓ Kelly
-MAX_BET_PER_BRACKET = 5.0      # 10% of bankroll
-MAX_TOTAL_EXPOSURE = 20.0      # 40% of bankroll
-DAILY_LOSS_LIMIT = 30.0        # 60% of bankroll — kill switch
+MAX_BET_PER_BRACKET = 0.90     # 10% of bankroll
+MAX_TOTAL_EXPOSURE = 3.60      # 40% of bankroll
+DAILY_LOSS_LIMIT = 5.40        # 60% of bankroll — kill switch
 
 MIN_TRUE_EDGE = 0.05           # 5pt minimum edge
 MIN_MODEL_AGREEMENT = 2        # 2+ models must agree

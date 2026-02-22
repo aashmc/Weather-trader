@@ -3,6 +3,7 @@ Weather Trader Bot — Telegram Alerts
 Sends trade notifications, resolution alerts, and heartbeats.
 """
 
+import json
 import logging
 import httpx
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
@@ -10,8 +11,8 @@ from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 log = logging.getLogger("alerts")
 
 
-async def send_telegram(message: str):
-    """Send a message via Telegram bot."""
+async def send_telegram(message: str, buttons: list[list[dict]] = None):
+    """Send a message via Telegram bot, optionally with inline buttons."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         log.debug("Telegram not configured, skipping alert")
         return
@@ -23,6 +24,9 @@ async def send_telegram(message: str):
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
+
+    if buttons:
+        payload["reply_markup"] = json.dumps({"inline_keyboard": buttons})
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:

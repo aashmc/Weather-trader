@@ -111,7 +111,7 @@ last_update_id = 0
 
 
 async def poll_telegram_commands():
-    """Check for Telegram commands and execute them."""
+    """Check for Telegram commands and button presses."""
     global last_update_id
     import httpx
 
@@ -121,7 +121,7 @@ async def poll_telegram_commands():
         return
 
     url = f"https://api.telegram.org/bot{token}/getUpdates"
-    params = {"offset": last_update_id + 1, "timeout": 0}
+    params = {"offset": last_update_id + 1, "timeout": 0, "allowed_updates": '["message","callback_query"]'}
 
     try:
         async with httpx.AsyncClient(timeout=5) as client:
@@ -130,6 +130,39 @@ async def poll_telegram_commands():
 
         for update in data.get("result", []):
             last_update_id = update["update_id"]
+
+            # Handle button presses (callback queries)
+            cb = update.get("callback_query")
+            if cb:
+                cb_data = cb.get("data", "")
+                cb_id = cb.get("id")
+                sender = str(cb.get("from", {}).get("id", ""))
+
+                if sender != chat_id:
+                    continue
+
+                # Answer the callback to remove loading spinner
+                await answer_callback(token, cb_id)
+
+                if cb_data.startswith("buy_"):
+                    sig_id = int(cb_data.replace("buy_", ""))
+                    await execute_pending_signal(sig_id)
+                elif cb_data.startswith("skip_"):
+                    sig_id = int(cb_data.replace("skip_", ""))
+                    pending = load_pending()
+                    pending = [s for s in pending if s.get("pending_id") != sig_id]
+                    save_pending(pending)
+                    await send_telegram(f"⏭ Signal #{sig_id} skipped.")
+                elif cb_data == "buyall":
+                    pending = load_pending()
+                    if pending:
+                        for sig in list(pending):
+                            await execute_pending_signal(sig["pending_id"])
+                    else:
+                        await send_telegram("No pending signals.")
+                continue
+
+            # Handle text commands
             msg = update.get("message", {})
             text = msg.get("text", "").strip().lower()
             sender = str(msg.get("chat", {}).get("id", ""))
@@ -153,8 +186,8 @@ async def poll_telegram_commands():
                 set_mode(mode="manual")
                 await send_telegram(
                     "👆 <b>MANUAL MODE</b>\n"
-                    "Signals will be queued — you approve each one.\n"
-                    "Use /buy_1, /buy_2 etc. or /buyall"
+                    "Signals will have ✅ Approve buttons.\n"
+                    "Tap to trade, or skip."
                 )
 
             elif text == "/auto":
@@ -162,19 +195,18 @@ async def poll_telegram_commands():
                 await send_telegram("🔴 <b>AUTO TRADING MODE</b>\n⚠️ All signals will be traded automatically!")
 
             elif text.startswith("/buy_"):
-                # Approve a specific signal: /buy_1, /buy_2, etc.
                 try:
                     sig_id = int(text.replace("/buy_", ""))
                     await execute_pending_signal(sig_id)
                 except ValueError:
-                    await send_telegram("❌ Invalid signal ID. Use /buy_1, /buy_2 etc.")
+                    await send_telegram("❌ Invalid signal ID.")
 
             elif text == "/buyall":
                 pending = load_pending()
                 if not pending:
-                    await send_telegram("No pending signals to execute.")
+                    await send_telegram("No pending signals.")
                 else:
-                    for sig in pending:
+                    for sig in list(pending):
                         await execute_pending_signal(sig["pending_id"])
 
             elif text == "/signals":
@@ -185,12 +217,13 @@ async def poll_telegram_commands():
                     lines = ["📋 <b>PENDING SIGNALS</b>\n"]
                     for s in pending:
                         lines.append(
-                            f"  /buy_{s['pending_id']} → {s['city']} {s['date']} "
+                            f"  #{s['pending_id']} → {s['city']} {s['date']} "
                             f"<b>{s['bracket']}</b> @ {s['ask']*100:.1f}¢ "
-                            f"edge +{s['true_edge']*100:.1f}pt ${s['kelly_bet']:.2f}"
+                            f"+{s['true_edge']*100:.1f}pt ${s['kelly_bet']:.2f}"
                         )
-                    lines.append(f"\n  /buyall — execute all {len(pending)} signals")
-                    await send_telegram("\n".join(lines))
+                    await send_telegram("\n".join(lines),
+                        buttons=[[{"text": "✅ Buy All", "callback_data": "buyall"}]]
+                    )
 
             elif text == "/clear":
                 clear_pending()
@@ -201,11 +234,11 @@ async def poll_telegram_commands():
                 portfolio = get_portfolio_summary()
                 pending = load_pending()
                 mode_map = {"dryrun": "🧪 DRY RUN", "manual": "👆 MANUAL", "auto": "🔴 AUTO"}
-                mode = mode_map.get(ctrl.get("mode", "dryrun"), "🧪 DRY RUN")
+                mode_str = mode_map.get(ctrl.get("mode", "dryrun"), "🧪 DRY RUN")
                 state = "⏸ PAUSED" if ctrl.get("paused") else "▶️ RUNNING"
                 await send_telegram(
                     f"📊 <b>STATUS</b>\n"
-                    f"  Mode: {mode}\n"
+                    f"  Mode: {mode_str}\n"
                     f"  State: {state}\n"
                     f"  Pending signals: {len(pending)}\n"
                     f"  Active positions: {portfolio['active_positions']}\n"
@@ -219,21 +252,32 @@ async def poll_telegram_commands():
                     "🤖 <b>COMMANDS</b>\n\n"
                     "<b>Modes:</b>\n"
                     "  /dryrun — log only, no orders\n"
-                    "  /manual — approve each trade\n"
-                    "  /auto — trade all signals automatically\n\n"
+                    "  /manual — approve each trade ✅\n"
+                    "  /auto — trade all automatically\n\n"
                     "<b>Trading:</b>\n"
-                    "  /signals — view pending signals\n"
+                    "  /signals — view pending\n"
                     "  /buy_1 — approve signal #1\n"
-                    "  /buyall — approve all pending\n"
-                    "  /clear — discard pending signals\n\n"
+                    "  /buyall — approve all\n"
+                    "  /clear — discard pending\n\n"
                     "<b>Control:</b>\n"
                     "  /pause — stop bot\n"
                     "  /resume — resume bot\n"
-                    "  /status — show current state"
+                    "  /status — current state"
                 )
 
     except Exception as e:
         log.debug(f"Telegram poll error: {e}")
+
+
+async def answer_callback(token: str, callback_id: str):
+    """Answer a callback query to dismiss the loading spinner on the button."""
+    import httpx
+    url = f"https://api.telegram.org/bot{token}/answerCallbackQuery"
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.post(url, json={"callback_query_id": callback_id})
+    except Exception:
+        pass
 
 
 async def execute_pending_signal(sig_id: int):
@@ -432,7 +476,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                     result["trades"] += 1
 
                 elif mode == "manual":
-                    # MANUAL — queue signal, let user approve via Telegram
+                    # MANUAL — queue signal with approve/skip buttons
                     pending_sig = {
                         "city": city_name,
                         "date": date_str,
@@ -459,9 +503,11 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                         f"  <b>{bracket}</b> @ {sig['ask']*100:.1f}¢\n"
                         f"  Edge: +{sig['true_edge']*100:.1f}pt | ${sig['kelly_bet']:.2f}\n"
                         f"  Contracts: {sig['contracts']} | Models: {sig['model_votes']}/{city['total_models']}\n"
-                        f"  E[Profit]: +${sig['expected_profit']:.2f}\n\n"
-                        f"  → /buy_{pid} to execute\n"
-                        f"  → /signals to see all pending"
+                        f"  E[Profit]: +${sig['expected_profit']:.2f}",
+                        buttons=[[
+                            {"text": "✅ Approve", "callback_data": f"buy_{pid}"},
+                            {"text": "⏭ Skip", "callback_data": f"skip_{pid}"},
+                        ]]
                     )
                     trades_placed.append({**sig, "order_id": f"PENDING_{pid}"})
                     result["trades"] += 1

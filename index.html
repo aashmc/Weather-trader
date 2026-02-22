@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Weather Trader</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{--bg:#ffffff;--sf:#f8f8fa;--sf2:#f0f0f4;--bd:#e4e4e8;--tx:#1a1a2e;--dm:#8888a0;--dm2:#a0a0b4;--gn:#16a34a;--gn2:rgba(22,163,74,.05);--rd:#dc2626;--rd2:rgba(220,38,38,.05);--am:#b45309;--h1:#4a86c8;--h2:#16a34a;--h3:rgba(26,26,46,.1)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,sans-serif;min-height:100vh;display:flex}
+.sidebar{width:160px;min-height:100vh;background:var(--sf);border-right:1px solid var(--bd);padding:16px 0;flex-shrink:0;position:sticky;top:0;height:100vh}
+.sb-title{font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:500;text-transform:uppercase;letter-spacing:1.5px;color:var(--dm2);padding:0 14px;margin-bottom:10px}
+.sb-item{display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:500;color:var(--dm);transition:all .15s;border-left:2px solid transparent}
+.sb-item:hover{color:var(--tx);background:var(--sf2)}
+.sb-item.active{color:var(--tx);background:var(--sf2);border-left-color:var(--tx)}
+.sb-flag{font-size:14px}
+.sb-meta{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm2);margin-top:1px}
+.main{flex:1;padding:20px;max-width:960px}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid var(--bd);padding-bottom:12px;margin-bottom:14px}
+.hdr h1{font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:500;letter-spacing:2px;color:var(--dm);text-transform:uppercase;margin-bottom:4px}
+.hdr h2{font-size:18px;font-weight:600;color:var(--tx)}.hdr h2 span{color:var(--dm2);font-weight:400}
+.hr{text-align:right;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm2);line-height:2}
+.lb{display:inline-flex;align-items:center;gap:5px;color:var(--dm);font-weight:500}
+.lb::before{content:'';width:5px;height:5px;background:var(--gn);border-radius:50%;animation:p 2s infinite}
+@keyframes p{0%,100%{opacity:1}50%{opacity:.15}}
+.warn{background:var(--sf);border:1px solid var(--bd);border-radius:6px;padding:6px 12px;margin-bottom:12px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm);line-height:1.5}
+.warn b{color:var(--tx)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
+.st{background:var(--sf);border:1px solid var(--bd);border-radius:6px;padding:10px 12px}
+.st-l{font-family:'IBM Plex Mono',monospace;font-size:7px;font-weight:500;text-transform:uppercase;letter-spacing:1.5px;color:var(--dm2);margin-bottom:3px}
+.st-v{font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:600;color:var(--tx)}
+.st-s{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm2);margin-top:2px}
+.sb-sig{border-radius:6px;padding:10px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;background:var(--sf);border:1px solid var(--bd)}
+.sg-t{font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:500;letter-spacing:1.5px;text-transform:uppercase;color:var(--dm);margin-bottom:2px}
+.sg-n{font-size:18px;font-weight:600}
+.sg-d{display:flex;gap:14px;flex-wrap:wrap}
+.si{text-align:right}.si-l{font-family:'IBM Plex Mono',monospace;font-size:7px;text-transform:uppercase;letter-spacing:1.5px;color:var(--dm2);margin-bottom:1px}
+.si-v{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600}
+.pn{background:var(--sf);border:1px solid var(--bd);border-radius:6px;padding:12px;margin-bottom:10px}
+.pt{font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:500;text-transform:uppercase;letter-spacing:1.5px;color:var(--dm2);margin-bottom:8px}
+table{width:100%;border-collapse:collapse}
+th{font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:500;text-transform:uppercase;letter-spacing:.5px;color:var(--dm2);padding:0 3px 6px;text-align:right;border-bottom:1px solid var(--bd)}
+th:first-child{text-align:left}
+td{font-family:'IBM Plex Mono',monospace;font-size:10px;padding:5px 3px;text-align:right;border-bottom:1px solid var(--bd);color:var(--dm)}
+td:first-child{text-align:left;font-weight:500;color:var(--tx)}
+.tb{display:inline-block;font-size:7px;font-weight:600;padding:2px 5px;border-radius:3px;letter-spacing:.5px}
+.tb-b{background:var(--gn2);color:var(--gn)}.tb-s{background:var(--rd2);color:var(--rd)}.tb-l{background:rgba(22,163,74,.03);color:var(--gn);opacity:.6}
+.rh{background:rgba(22,163,74,.02)}
+.hist{display:flex;align-items:flex-end;gap:4px;height:100px;margin:6px 0}
+.hc{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+.hbs{display:flex;gap:2px;align-items:flex-end;width:100%;justify-content:center;flex:1}
+.hb1,.hb2,.hb3{width:28%;border-radius:2px 2px 0 0;transition:height .5s}
+.hp{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm2);margin-bottom:2px}
+.hl{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm2);margin-top:4px}
+.tot{margin-top:8px;padding-top:8px;border-top:1px solid var(--bd);display:flex;gap:18px;font-family:'IBM Plex Mono',monospace;font-size:10px;flex-wrap:wrap}
+#log{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm);max-height:180px;overflow-y:auto;padding:2px 0;line-height:1.7}
+.lo{color:var(--dm)}.le{color:var(--rd)}.lw{color:var(--am)}
+.ft{margin-top:8px;font-size:8px;color:var(--dm2);line-height:1.6;font-family:'IBM Plex Mono',monospace}
+.ft a{color:var(--h1);text-decoration:underline;text-underline-offset:2px}
+.pnl-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-family:'IBM Plex Mono',monospace;font-size:10px}
+.pnl-wait{background:var(--sf);border:1px solid var(--bd);color:var(--dm)}
+.pnl-live{background:var(--sf);border:1px solid var(--bd);color:var(--tx)}
+.pnl-win{background:rgba(22,163,74,.03);border:1px solid rgba(22,163,74,.12);color:var(--gn)}
+.pnl-lose{background:rgba(220,38,38,.03);border:1px solid rgba(220,38,38,.12);color:var(--rd)}
+.pnl-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.pnl-big{text-align:center;padding:12px;font-family:'IBM Plex Mono',monospace;margin-bottom:6px}
+.pnl-big-label{font-size:8px;text-transform:uppercase;letter-spacing:2px;color:var(--dm2);margin-bottom:3px}
+.pnl-big-val{font-size:22px;font-weight:600}
+.pnl-big-sub{font-size:8px;color:var(--dm2);margin-top:3px}
+.pos-w{background:rgba(22,163,74,.02)}.pos-l{opacity:.35}
+@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.sidebar{display:none}.main{padding:12px}}
+.dtabs{display:flex;gap:3px;margin-bottom:12px;overflow-x:auto;padding-bottom:2px}
+.dtab{padding:5px 12px;border-radius:4px;border:1px solid var(--bd);background:transparent;color:var(--dm);cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:500;white-space:nowrap;transition:all .15s}
+.dtab:hover{color:var(--tx)}
+.dtab.active{background:var(--sf2);border-color:var(--dm2);color:var(--tx)}
+.dtab .dtag{font-size:7px;padding:1px 3px;border-radius:2px;margin-left:4px;font-weight:600;letter-spacing:.5px}
+.dtab .dtag-today{background:rgba(22,163,74,.08);color:var(--gn)}
+.dtab .dtag-past{background:rgba(0,0,0,.06);color:var(--dm)}
+.dtab .dtag-future{background:rgba(0,0,0,.04);color:var(--dm)}
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+<div class="sb-title">Markets</div>
+<div id="cityNav"></div>
+</div>
+
+<div class="main">
+<div class="hdr">
+<div><h1>Weather Trader</h1><h2 id="hdrTitle">Loading... <span></span></h2></div>
+<div class="hr"><div class="lb" id="badge">Starting...</div><br><span id="stationInfo">—</span><br><span id="ut">—</span></div>
+</div>
+
+<div class="dtabs" id="dateTabs"></div>
+
+<div class="warn" id="biasWarn"></div>
+
+<div class="stats">
+<div class="st"><div class="st-l">METAR Live</div><div class="st-v" id="curT">—</div><div class="st-s" id="curTs">—</div></div>
+<div class="st"><div class="st-l">Day High (METAR)</div><div class="st-v" id="dH">—</div><div class="st-s" id="dHs">—</div></div>
+<div class="st"><div class="st-l">Ensemble Mean</div><div class="st-v" id="ensMean">—</div><div class="st-s" id="ensSrc">loading...</div></div>
+<div class="st"><div class="st-l">Kelly Mode</div><div class="st-v">30%</div><div class="st-s">third Kelly (conservative)</div></div>
+</div>
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+<button id="modeBtn" onclick="toggleMode()" style="padding:5px 14px;border-radius:4px;border:1px solid var(--bd);background:var(--sf);color:var(--tx);cursor:pointer;font-size:10px;font-weight:500;font-family:'IBM Plex Mono',monospace;letter-spacing:.5px">PAPER $100</button>
+<span id="modeLabel" style="font-size:10px;color:var(--dm)">PAPER MODE: All filters off · $100 bankroll</span>
+</div>
+
+<div id="entryTiming" style="display:none;padding:8px 14px;border-radius:6px;margin-bottom:8px;font-size:11px;border:1px solid var(--dm)"></div>
+<div id="stopLossWarn" style="display:none;padding:10px 14px;border-radius:6px;margin-bottom:8px;font-size:12px;font-weight:700;border:1px solid var(--rd);background:rgba(220,38,38,.04);color:var(--rd)"></div>
+
+<div class="sb-sig" id="sigB">
+<div><div class="sg-t" id="sigT" style="color:var(--dm)">Connecting...</div><div class="sg-n" id="sigN">—</div></div>
+<div class="sg-d" id="sigD"></div>
+</div>
+
+<div class="pn">
+<div class="pt">Bracket Analysis — Bias-Corrected True Edge After All Costs</div>
+<table><thead><tr>
+<th style="text-align:left">Bracket</th><th style="text-align:center">Signal</th>
+<th>Raw %</th><th>Corrected %</th><th>Market %</th><th>Bid</th><th>Ask</th><th>Spread</th>
+<th>Raw Edge</th><th style="color:var(--gn)">True Edge</th><th>Models</th><th>Bet</th><th>E[P]</th>
+</tr></thead><tbody id="tbl"></tbody></table>
+<div class="tot" id="totals"></div>
+</div>
+
+<div class="pn" id="histPanel" style="display:none">
+<div class="pt">Distribution: Raw → Corrected → Market</div>
+<div class="hist" id="hist"></div>
+<div style="display:flex;gap:14px;margin-top:6px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm)"><span style="color:var(--h1)">◼ Raw</span><span style="color:var(--h2)">◼ Corrected</span><span style="opacity:.35">◼ Market</span></div>
+</div>
+
+<div class="pnl-bar" id="pnlBar"><div class="pnl-dot" id="pnlDot"></div><span id="pnlStatus">Initializing...</span></div>
+<div class="pn">
+<div class="pt" id="ptHeader">Paper Trades · $100 Bankroll · ⅓ Kelly</div>
+<div class="pnl-big" id="pnlBigBox" style="display:none">
+<div class="pnl-big-label" id="pnlBigLabel">Unrealized P&L</div>
+<div class="pnl-big-val" id="pnlBigVal">—</div>
+<div class="pnl-big-sub" id="pnlBigSub">—</div>
+</div>
+<table>
+<thead><tr>
+<th style="text-align:left">Bracket</th><th style="text-align:center">Signal</th>
+<th>Model %</th><th>Best Ask</th><th>VWAP</th><th>Cur Bid</th><th>Ctrs</th><th>Wager</th><th>E[P]</th><th id="resH">Unrealized</th>
+</tr></thead>
+<tbody id="ptTbl"></tbody>
+<tfoot><tr style="border-top:2px solid var(--bd)">
+<td colspan="5" style="text-align:left;font-weight:700">TOTALS</td>
+<td></td><td style="font-weight:600" id="ptCtrs">—</td><td style="font-weight:700" id="ptWager">—</td>
+<td style="color:var(--dm);font-weight:700" id="ptEv">—</td>
+<td id="ptTotal" style="font-weight:700;color:var(--dm)">—</td>
+</tr></tfoot>
+</table>
+</div>
+
+<div class="pn"><div class="pt">Log</div><div id="log"></div></div>
+<div class="ft" id="footer">—</div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// CITY CONFIGURATIONS
+// ══════════════════════════════════════════════════════════
+const CITIES={
+  london:{
+    name:"London",flag:"🇬🇧",icao:"EGLC",lat:51.5053,lon:0.0553,
+    unit:"C",stationName:"London City Airport",
+    polyCity:"london",tz:"Europe/London",
+    wunderground:"https://www.wunderground.com/history/daily/gb/london/EGLC",
+    // 176 members: ICON(39)+ECMWF IFS(50)+ECMWF AIFS(50)+GEM(20)+UKMO(17)
+    ensembleModels:"icon_seamless_eps,ecmwf_ifs025_ensemble,ecmwf_aifs025_ensemble,gem_global_ensemble,ukmo_global_ensemble_20km",
+    syntheticModel:null,
+    bias:{mean:0.17,sd:0.66,note:"45-day METAR backtest Jan-Feb 2026"},
+  },
+  seoul:{
+    name:"Seoul",flag:"🇰🇷",icao:"RKSI",lat:37.4602,lon:126.4407,
+    unit:"C",stationName:"Incheon Intl Airport",
+    polyCity:"seoul",tz:"Asia/Seoul",
+    wunderground:"https://www.wunderground.com/history/daily/kr/incheon/RKSI",
+    // 120 ensemble + 10 KMA synthetic = ~130 members
+    // Dropped: ICON(1.7 RMSE), UKMO(2.8 RMSE), GFS(2.4), JMA(2.2)
+    ensembleModels:"ecmwf_ifs025_ensemble,ecmwf_aifs025_ensemble,gem_global_ensemble",
+    syntheticModel:"kma_seamless", // Korea's own model, best for Seoul (0.9 RMSE) but no ensemble
+    bias:{mean:0.69,sd:0.86,note:"45-day METAR backtest Jan-Feb 2026"},
+  },
+  nyc:{
+    name:"NYC",flag:"🇺🇸",icao:"KLGA",lat:40.7772,lon:-73.8726,
+    unit:"F",stationName:"LaGuardia Airport",
+    polyCity:"nyc",tz:"America/New_York",
+    wunderground:"https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA",
+    // 89 members: ICON(39)+ECMWF IFS(50). ECMWF has +2.8F bias, corrected via MC
+    // Dropped: GEM(4.0 RMSE), JMA(4.6), UKMO(2.7)
+    ensembleModels:"icon_seamless_eps,ecmwf_ifs025_ensemble",
+    syntheticModel:null,
+    bias:{mean:1.79,sd:2.49,note:"45-day METAR backtest Jan-Feb 2026"},
+  },
+  seattle:{
+    name:"Seattle",flag:"🇺🇸",icao:"KSEA",lat:47.4502,lon:-122.3088,
+    unit:"F",stationName:"Seattle-Tacoma Intl",
+    polyCity:"seattle",tz:"America/Los_Angeles",
+    wunderground:"https://www.wunderground.com/history/daily/us/wa/seatac/KSEA",
+    // 109 members: ICON(39)+ECMWF IFS(50)+GEM(20). All ~same bias, consistent correction
+    // Dropped: UKMO(2.9 RMSE), JMA(2.6)
+    ensembleModels:"icon_seamless_eps,ecmwf_ifs025_ensemble,gem_global_ensemble",
+    syntheticModel:null,
+    bias:{mean:1.66,sd:1.93,note:"45-day METAR backtest Jan-Feb 2026"},
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════
+let CITY=CITIES.london; // active city
+let B=[]; // bracket labels — populated dynamically from Polymarket
+let TOKENS={};
+const KELLY_FRAC=0.30,RS=60;
+let LIVE_MODE=false,BR=100;
+const FILTERS={
+  paper:{minEdge:0,minDepth:0,maxAsk:1.0,minModels:0,bankroll:100},
+  live:{minEdge:0.05,minDepth:20,maxAsk:0.30,minModels:2,bankroll:25}
+};
+function F(){return LIVE_MODE?FILTERS.live:FILTERS.paper}
+
+let prices={},books={},rawProbs={},corrProbs={},ensMean=0,ensCount=0;
+let gasCostUsd=0.03,polPrice=0.35,metarTemp=null,metarHigh=null,metarDayMax=null;
+let cd=RS,pxi=0;
+let ptResolved=false,ptWinner=null;
+
+const $=id=>document.getElementById(id);
+function log(m,c=""){const el=$("log"),t=new Date().toLocaleTimeString();el.innerHTML=`<div class="${c}">[${t}] ${m}</div>`+el.innerHTML;while(el.children.length>40)el.removeChild(el.lastChild)}
+
+const PX=[u=>"https://api.allorigins.win/raw?"+new URLSearchParams({url:u}),u=>"https://corsproxy.io/?"+encodeURIComponent(u),u=>u];
+
+// ══════════════════════════════════════════════════════════
+// UNIT HELPERS
+// ══════════════════════════════════════════════════════════
+function cToF(c){return c*9/5+32}
+function fToC(f){return(f-32)*5/9}
+function ensToMarket(tempC){return CITY.unit==="F"?cToF(tempC):tempC}
+function unitLabel(){return"°"+CITY.unit}
+
+// ══════════════════════════════════════════════════════════
+// DYNAMIC BRACKET PARSING
+// ══════════════════════════════════════════════════════════
+function parseBracket(label){
+  // Returns {type,low,high,val,unit} for matching temps to brackets
+  const isF=label.includes("°F"),u=isF?"F":"C";
+  if(label.includes("or below")||label.includes("or less")){
+    const m=label.match(/([-\d]+)/);return{type:"below",high:parseInt(m[1]),unit:u}}
+  if(label.includes("or higher")||label.includes("or above")){
+    const m=label.match(/([-\d]+)/);return{type:"above",low:parseInt(m[1]),unit:u}}
+  const rm=label.match(/([-\d]+)[\s]*[-–][\s]*([-\d]+)/);
+  if(rm)return{type:"range",low:parseInt(rm[1]),high:parseInt(rm[2]),unit:u};
+  const sm=label.match(/([-\d]+)/);
+  if(sm)return{type:"single",val:parseInt(sm[1]),unit:u};
+  return null;
+}
+
+function tempToBracket(temp){
+  // temp in market units, match against current B array
+  const rd=Math.round(temp);
+  for(const label of B){
+    const p=parseBracket(label);if(!p)continue;
+    if(p.type==="below"&&rd<=p.high)return label;
+    if(p.type==="above"&&rd>=p.low)return label;
+    if(p.type==="single"&&rd===p.val)return label;
+    if(p.type==="range"&&rd>=p.low&&rd<=p.high)return label;
+  }
+  return B[0]||null; // fallback to lowest
+}
+
+function bracketShortLabel(label){
+  return label.replace(/°[CF]\s*or below/,"≤").replace(/°[CF]\s*or higher/,"+").replace(/°[CF]/,"");
+}
+
+function bracketRange(){
+  // Get min/max degree values from brackets for Monte Carlo range
+  let mn=999,mx=-999;
+  for(const label of B){
+    const p=parseBracket(label);if(!p)continue;
+    if(p.val!==undefined){mn=Math.min(mn,p.val);mx=Math.max(mx,p.val)}
+    if(p.low!==undefined)mn=Math.min(mn,p.low);
+    if(p.high!==undefined)mx=Math.max(mx,p.high);
+  }
+  return{min:mn-5,max:mx+5}; // padding for Monte Carlo tails
+}
+
+// ══════════════════════════════════════════════════════════
+// CITY SWITCHING
+// ══════════════════════════════════════════════════════════
+function selectCity(key){
+  CITY=CITIES[key];
+  // Reset all state
+  B=[];TOKENS={};prices={};books={};rawProbs={};corrProbs={};
+  ensMean=0;ensCount=0;metarTemp=null;metarHigh=null;metarDayMax=null;
+  ptResolved=false;ptWinner=null;
+  _marketsDiscovered=false;
+  // Immediately clear analysis display to prevent stale brackets showing
+  $("tbl").innerHTML="";$("totals").innerHTML="";$("hist").innerHTML="";
+  $("sigT").textContent="Loading...";$("sigN").textContent="—";$("sigD").innerHTML="";
+  $("sigB").style.borderColor="var(--bd)";
+  $("dHs").textContent="loading...";
+  $("ensSrc").textContent="loading...";
+  // Update UI
+  renderCityNav();
+  $("hdrTitle").innerHTML=CITY.name+" High Temp <span></span>";
+  $("stationInfo").textContent=CITY.icao+" "+CITY.lat.toFixed(3)+"°N "+Math.abs(CITY.lon).toFixed(3)+"°"+(CITY.lon>=0?"E":"W");
+  $("curTs").textContent="station "+CITY.icao;
+  $("curT").textContent="—";$("dH").textContent="—";$("ensMean").textContent="—";
+  // Update bias banner
+  if(CITY.bias.sd>0){
+    const modelList=CITY.ensembleModels.split(",").map(m=>m.replace("_ensemble","").replace("_eps","").replace("_seamless","").replace("_global","").replace("025","")).join(" + ");
+    $("biasWarn").innerHTML=`<b>Bias</b>: +${CITY.bias.mean}${unitLabel()} σ=${CITY.bias.sd} (${CITY.bias.note}) · Models: ${modelList}${CITY.syntheticModel?" + KMA":""}`;
+    $("biasWarn").style.display="";
+  }else{
+    $("biasWarn").innerHTML=`<b>No bias correction</b> — ${CITY.name} uncalibrated. Using raw ensemble probabilities.`;
+    $("biasWarn").style.display="";
+  }
+  // Update footer
+  $("footer").innerHTML=`Not financial advice · Ensemble: Open-Meteo · Bias: +${CITY.bias.mean}${unitLabel()} σ=${CITY.bias.sd} (METAR-calibrated) · Resolution: <a href="${CITY.wunderground}" target="_blank">Wunderground ${CITY.icao}</a>`;
+  // Re-initialize dates for this city
+  ACTIVE_DATE=buildDateConfig(new Date().toISOString().split("T")[0]);
+  ALL_DATES=generateDates().map(buildDateConfig);
+  renderDateTabs();
+  log("Switched to "+CITY.name+" ("+CITY.icao+")","lo");
+  refresh();
+}
+
+function renderCityNav(){
+  $("cityNav").innerHTML=Object.entries(CITIES).map(([key,c])=>{
+    const active=c.icao===CITY.icao?"active":"";
+    return`<div class="sb-item ${active}" onclick="selectCity('${key}')">
+      <span class="sb-flag">${c.flag}</span>
+      <div><div>${c.name}</div><div class="sb-meta">${c.icao} · °${c.unit}</div></div>
+    </div>`;
+  }).join("");
+}
+
+// ══════════════════════════════════════════════════════════
+// TRADING MODE
+// ══════════════════════════════════════════════════════════
+function applyFilters(a){
+  const f=F(),reasons=[];
+  if(a.trueEdge<f.minEdge)reasons.push(`Edge ${(a.trueEdge*100).toFixed(1)}pt < ${(f.minEdge*100)}pt min`);
+  if(a.askD<f.minDepth&&f.minDepth>0)reasons.push(`Depth ${a.askD.toFixed(0)} < ${f.minDepth} min`);
+  if(a.ask>f.maxAsk&&f.maxAsk<1)reasons.push(`Ask ${(a.ask*100).toFixed(0)}¢ > ${(f.maxAsk*100)}¢ max`);
+  if(f.minModels>0&&a.modelVotes!==undefined&&a.modelVotes<f.minModels)reasons.push(`Only ${a.modelVotes}/${CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0)} models agree (need ${f.minModels})`);
+  return{pass:reasons.length===0&&a.trueEdge>0,reasons};
+}
+
+function toggleMode(){
+  LIVE_MODE=!LIVE_MODE;BR=F().bankroll;
+  const btn=$("modeBtn");
+  btn.textContent=LIVE_MODE?"LIVE $25":"PAPER $100";
+  btn.style.background=LIVE_MODE?"rgba(220,38,38,.06)":"var(--sf)";
+  btn.style.color=LIVE_MODE?"var(--rd)":"var(--tx)";
+  btn.style.borderColor=LIVE_MODE?"var(--rd)":"var(--bd)";
+  $("modeLabel").textContent=LIVE_MODE?"LIVE MODE: Min edge 5pt · Min depth 20 · Max ask 30¢ · ≥2 models · ⅓ Kelly · $25 bankroll":"PAPER MODE: All filters off · ⅓ Kelly · $100 bankroll";
+  render();ptRender();
+  log(LIVE_MODE?"Switched to LIVE mode ($25, strict filters)":"Switched to PAPER mode ($100, no filters)","lw");
+}
+
+// ══════════════════════════════════════════════════════════
+// DATE SYSTEM
+// ══════════════════════════════════════════════════════════
+const MONTHS=["january","february","march","april","may","june","july","august","september","october","november","december"];
+const MONTHS_SHORT=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function buildDateConfig(dateStr){
+  const d=new Date(dateStr+"T12:00:00Z");
+  const y=d.getUTCFullYear(),m=d.getUTCMonth(),day=d.getUTCDate();
+  const monthName=MONTHS[m],monthShort=MONTHS_SHORT[m];
+  const dayPad=String(day).padStart(2,"0");
+  const today=new Date();today.setUTCHours(12,0,0,0);
+  const todayStr=today.toISOString().split("T")[0];
+  const isToday=dateStr===todayStr,isPast=dateStr<todayStr,isFuture=dateStr>todayStr;
+  const slug=`highest-temperature-in-${CITY.polyCity}-on-${monthName}-${day}-${y}`;
+  return{
+    dateStr,dayOfMonth:day,dayPad,
+    display:`${monthShort} ${day} ${y}`,displayShort:`${monthShort} ${day}`,
+    slug,polyUrl:`https://gamma-api.polymarket.com/events?slug=${slug}`,
+    ensDatePrefix:`${y}-${String(m+1).padStart(2,"0")}-${dayPad}`,
+    metarDayPattern:new RegExp(`${CITY.icao}\\s+${dayPad}\\d{4}Z`),
+    // Timezone-aware local date filter for METAR obsTime (epoch secs)
+    // Wunderground convention: 00:00 belongs to previous day (end of day, not start)
+    metarLocalDateFilter: function(obsTimeSec){
+      if(!obsTimeSec) return false;
+      try{
+        const d=new Date(obsTimeSec*1000);
+        const localDate=d.toLocaleDateString('en-CA',{timeZone:CITY.tz}); // YYYY-MM-DD
+        if(localDate!==dateStr) return false;
+        // Exclude exact midnight (00:00:00) — Wunderground assigns it to previous day
+        const localTime=d.toLocaleTimeString('en-GB',{timeZone:CITY.tz,hour12:false});
+        return localTime!=="00:00:00";
+      }catch(e){return false}
+    },
+    startUTC:`${dateStr}T00:00:00Z`,
+    endUTC:(()=>{const n=new Date(d);n.setUTCDate(n.getUTCDate()+1);return n.toISOString().split("T")[0]+"T00:00:00Z"})(),
+    isToday,isPast,isFuture,
+  };
+}
+
+function generateDates(){
+  const dates=[],today=new Date();today.setUTCHours(12,0,0,0);
+  for(let offset=-3;offset<=1;offset++){const d=new Date(today);d.setUTCDate(d.getUTCDate()+offset);dates.push(d.toISOString().split("T")[0])}
+  return dates;
+}
+
+let ACTIVE_DATE=buildDateConfig(new Date().toISOString().split("T")[0]);
+let ALL_DATES=generateDates().map(buildDateConfig);
+let LIVE_MARKETS={};
+
+async function discoverMarkets(){
+  const candidates=generateDates().map(buildDateConfig);
+  const probes=candidates.map(async dc=>{
+    for(const fetcher of [u=>u,...PX]){
+      try{
+        const url=typeof fetcher==='function'?fetcher(dc.polyUrl):dc.polyUrl;
+        const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+        if(!r.ok)continue;
+        const d=JSON.parse(await r.text());
+        const ev=Array.isArray(d)?d[0]:d;
+        if(ev&&ev.markets&&ev.markets.length>0){
+          LIVE_MARKETS[dc.dateStr]={exists:true,active:ev.active,closed:ev.closed};
+          return{...dc,marketExists:true,active:ev.active,closed:ev.closed};
+        }
+      }catch(e){}
+    }
+    return{...dc,marketExists:false};
+  });
+  const settled=await Promise.all(probes);
+  ALL_DATES=settled.filter(dc=>dc.marketExists);
+  if(!ALL_DATES.length){ALL_DATES=[buildDateConfig(new Date().toISOString().split("T")[0])];log("No markets found — fallback to today","lw")}
+  if(!ALL_DATES.find(dc=>dc.dateStr===ACTIVE_DATE.dateStr)){
+    const today=new Date().toISOString().split("T")[0];
+    const fb=ALL_DATES.find(dc=>dc.dateStr===today)||ALL_DATES[0];
+    if(fb)ACTIVE_DATE=buildDateConfig(fb.dateStr);
+  }
+  renderDateTabs();
+  log("Found "+ALL_DATES.length+" "+CITY.name+" markets","lo");
+}
+
+function selectDate(dateStr){
+  ACTIVE_DATE=buildDateConfig(dateStr);
+  $("hdrTitle").innerHTML=CITY.name+" High Temp <span>· "+ACTIVE_DATE.display+"</span>";
+  document.querySelector("title").textContent="Weather Trader — "+CITY.name+" "+ACTIVE_DATE.displayShort;
+  $("dH").textContent="—";$("dHs").textContent=ACTIVE_DATE.isToday?"Awaiting data":(ACTIVE_DATE.isPast?"Loading...":"Forecast only");
+  metarHigh=null;metarTemp=null;metarDayMax=null;
+  B=[];prices={};books={};TOKENS={};rawProbs={};corrProbs={};ensMean=0;ensCount=0;
+  ptResolved=false;ptWinner=null;
+  document.querySelectorAll(".dtab").forEach(t=>t.classList.toggle("active",t.dataset.date===dateStr));
+  refresh();
+}
+
+function renderDateTabs(){
+  const c=$("dateTabs");
+  if(!ALL_DATES.length){c.innerHTML=`<div style="color:var(--dm);font-size:10px">Discovering markets...</div>`;return}
+  c.innerHTML=ALL_DATES.map(dc=>{
+    const active=dc.dateStr===ACTIVE_DATE.dateStr?"active":"";
+    const mkt=LIVE_MARKETS[dc.dateStr]||{};
+    let tag,tagClass;
+    if(mkt.closed){tag="CLOSED";tagClass="dtag-past"}
+    else if(dc.isToday){tag="TODAY";tagClass="dtag-today"}
+    else if(dc.isFuture){tag="UPCOMING";tagClass="dtag-future"}
+    else{tag="PAST";tagClass="dtag-past"}
+    const ledger=TRADE_LEDGER[CITY.icao+":"+dc.dateStr];
+    let pnlTag="";
+    if(ledger&&ledger.result&&ledger.result.resolved){
+      const pnl=ledger.result.pnl;
+      pnlTag=`<span style="font-size:8px;margin-left:4px;color:${pnl>=0?"var(--gn)":"var(--rd)"}">${pnl>=0?"+":""}$${Math.abs(pnl).toFixed(0)}</span>`;
+    }else if(ledger&&ledger.trades.length){
+      pnlTag=`<span style="font-size:8px;margin-left:4px;color:var(--dm)">●</span>`;
+    }
+    return`<div class="dtab ${active}" data-date="${dc.dateStr}" onclick="selectDate('${dc.dateStr}')">${dc.displayShort}<span class="dtag ${tagClass}">${tag}</span>${pnlTag}</div>`;
+  }).join("");
+}
+
+// ══════════════════════════════════════════════════════════
+// BIAS CORRECTION (generalized)
+// ══════════════════════════════════════════════════════════
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t^=t+Math.imul(t^t>>>7,61|t);return((t^t>>>14)>>>0)/4294967296}}
+
+function biasCorrect(rawDistByDeg){
+  // rawDistByDeg: {degreeInMarketUnits: probability}
+  // Returns corrected distribution in same units
+  if(CITY.bias.sd===0)return{...rawDistByDeg}; // no correction, pass through
+  const N=50000,rng=mulberry32(42);
+  const range=bracketRange();
+  const counts={};
+  for(let i=range.min;i<=range.max;i++)counts[i]=0;
+  // Find median degree for fallback
+  const allDegs=Object.keys(rawDistByDeg).map(Number);
+  const medDeg=allDegs.length?allDegs[Math.floor(allDegs.length/2)]:0;
+  for(let i=0;i<N;i++){
+    let r=rng(),cum=0,baseDeg=medDeg;
+    for(const[deg,prob] of Object.entries(rawDistByDeg)){
+      cum+=prob;if(r<=cum){baseDeg=parseInt(deg);break}
+    }
+    const baseT=baseDeg+(rng()-0.5);
+    const u1=rng(),u2=rng();
+    const z=Math.sqrt(-2*Math.log(u1+1e-10))*Math.cos(2*Math.PI*u2);
+    const metarT=baseT+CITY.bias.mean+CITY.bias.sd*z;
+    const rounded=Math.round(metarT);
+    if(rounded>=range.min&&rounded<=range.max)counts[rounded]++;
+  }
+  const total=Object.values(counts).reduce((s,v)=>s+v,0);
+  const result={};
+  for(let i=range.min;i<=range.max;i++){if(counts[i]>0)result[i]=counts[i]/total}
+  return result;
+}
+
+function mapToLabels(distByDeg){
+  // Map degree-keyed distribution to bracket-label-keyed distribution
+  const r={};
+  for(const label of B){
+    const p=parseBracket(label);if(!p)continue;
+    if(p.type==="below")r[label]=Object.entries(distByDeg).filter(([k])=>parseInt(k)<=p.high).reduce((s,[,v])=>s+v,0);
+    else if(p.type==="above")r[label]=Object.entries(distByDeg).filter(([k])=>parseInt(k)>=p.low).reduce((s,[,v])=>s+v,0);
+    else if(p.type==="single")r[label]=distByDeg[p.val]||0;
+    else if(p.type==="range")r[label]=Object.entries(distByDeg).filter(([k])=>{const d=parseInt(k);return d>=p.low&&d<=p.high}).reduce((s,[,v])=>s+v,0);
+  }
+  return r;
+}
+
+// ══════════════════════════════════════════════════════════
+// FETCH FUNCTIONS (all parameterized by CITY)
+// ══════════════════════════════════════════════════════════
+async function fetchEnsemble(){
+  try{
+    const url=`https://ensemble-api.open-meteo.com/v1/ensemble?latitude=${CITY.lat}&longitude=${CITY.lon}&hourly=temperature_2m&models=${CITY.ensembleModels}&forecast_days=7&timezone=${CITY.tz}`;
+    const r=await fetch(url,{signal:AbortSignal.timeout(15000)});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const d=await r.json(),hourly=d.hourly||{},times=hourly.time||[];
+    const memberKeys=Object.keys(hourly).filter(k=>k.startsWith("temperature_2m_member"));
+    if(!memberKeys.length)throw new Error("No ensemble members");
+    const targetIdx=[];
+    for(let i=0;i<times.length;i++){if(times[i]&&times[i].startsWith(ACTIVE_DATE.ensDatePrefix))targetIdx.push(i)}
+    if(!targetIdx.length)throw new Error("No "+ACTIVE_DATE.displayShort+" data");
+    const maxTemps=[],modelVotesPerDeg={};
+    for(const mk of memberKeys){
+      const vals=hourly[mk];let mx=-999;
+      for(const i of targetIdx){if(vals[i]!=null&&vals[i]>mx)mx=vals[i]}
+      if(mx>-999){
+        const mktTemp=ensToMarket(mx); // convert to market units
+        maxTemps.push(mktTemp);
+        let model="x";
+        if(mk.includes("ecmwf_ifs"))model="ifs";else if(mk.includes("ecmwf_aifs"))model="aifs";
+        else if(mk.includes("icon"))model="ico";else if(mk.includes("gem"))model="gem";
+        else if(mk.includes("ukmo"))model="ukmo";else if(mk.includes("bom"))model="bom";
+        else if(mk.includes("gfs")||mk.includes("ncep"))model="gfs";
+        const rd=Math.round(mktTemp);
+        if(!modelVotesPerDeg[rd])modelVotesPerDeg[rd]={};
+        modelVotesPerDeg[rd][model]=true;
+      }
+    }
+    // If city has a synthetic model (e.g. KMA for Seoul), fetch deterministic forecast & add synthetic members
+    if(CITY.syntheticModel){
+      try{
+        const sUrl=`https://api.open-meteo.com/v1/forecast?latitude=${CITY.lat}&longitude=${CITY.lon}&daily=temperature_2m_max&models=${CITY.syntheticModel}&forecast_days=7&timezone=${CITY.tz}`;
+        const sR=await fetch(sUrl,{signal:AbortSignal.timeout(10000)});
+        if(sR.ok){
+          const sD=await sR.json(),sDates=sD.daily?.time||[],sMaxes=sD.daily?.temperature_2m_max||[];
+          const sIdx=sDates.indexOf(ACTIVE_DATE.dateStr);
+          if(sIdx>=0&&sMaxes[sIdx]!=null){
+            const synT=ensToMarket(sMaxes[sIdx]); // °C → market units
+            // Add 10 synthetic members with tiny noise around the forecast
+            for(let i=0;i<10;i++){
+              const jitter=(Math.random()-0.5)*0.6; // ±0.3° noise
+              const t=synT+jitter;
+              maxTemps.push(t);
+              const rd=Math.round(t);
+              if(!modelVotesPerDeg[rd])modelVotesPerDeg[rd]={};
+              modelVotesPerDeg[rd]["kma"]=true;
+            }
+            log("KMA synthetic: "+synT.toFixed(1)+unitLabel()+" (10 members)","lo");
+          }
+        }
+      }catch(e){log("KMA synthetic: "+e.message,"le")}
+    }
+    window._modelAgreement={};
+    for(const[deg,models] of Object.entries(modelVotesPerDeg))window._modelAgreement[parseInt(deg)]=Object.keys(models).length;
+    // Build raw distribution in market units
+    const range=bracketRange();
+    const rawCounts={};
+    for(let i=range.min;i<=range.max;i++)rawCounts[i]=0;
+    for(const t of maxTemps){const rd=Math.round(t);if(rd>=range.min&&rd<=range.max)rawCounts[rd]++}
+    const total=maxTemps.length;
+    const rawByDeg={};
+    for(let i=range.min;i<=range.max;i++){if(rawCounts[i]>0)rawByDeg[i]=rawCounts[i]/total}
+    rawProbs=mapToLabels(rawByDeg);
+    ensMean=maxTemps.reduce((s,v)=>s+v,0)/total;ensCount=total;
+    const corrByDeg=biasCorrect(rawByDeg);
+    corrProbs=mapToLabels(corrByDeg);
+    $("ensMean").textContent=ensMean.toFixed(1)+unitLabel();
+    $("ensSrc").textContent=ensCount+" members · live";
+    log("Ensemble: "+ensCount+" members, mean "+ensMean.toFixed(1)+unitLabel(),"lo");
+  }catch(e){
+    log("Ensemble: "+e.message,"le");
+    rawProbs={};corrProbs={};ensMean=0;ensCount=0;
+    $("ensMean").textContent="—";$("ensSrc").textContent="error";
+  }
+}
+
+async function fetchMetar(){
+  const metarUrl=`https://aviationweather.gov/api/data/metar?ids=${CITY.icao}&format=json&hours=72`;
+  try{
+    const r=await fetch(PX[0](metarUrl),{signal:AbortSignal.timeout(10000)});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const d=JSON.parse(await r.text());
+    if(d.length){
+      metarTemp=d[0].temp;
+      const displayTemp=CITY.unit==="F"?cToF(metarTemp).toFixed(0)+"°F":metarTemp+"°C";
+      $("curT").textContent=displayTemp;
+      $("curTs").textContent="METAR "+d[0].rawOb.substring(5,16);
+      // Filter by LOCAL date using obsTime (timezone-aware)
+      const dayObs=d.filter(m=>ACTIVE_DATE.metarLocalDateFilter(m.obsTime));
+      if(dayObs.length){
+        const mxC=Math.max(...dayObs.map(m=>m.temp));
+        metarHigh=mxC;metarDayMax=CITY.unit==="F"?Math.round(cToF(mxC)):mxC;
+        $("dH").textContent=(CITY.unit==="F"?Math.round(cToF(mxC))+"°F":mxC+"°C");
+        $("dHs").textContent="METAR max "+ACTIVE_DATE.displayShort;
+      }
+      log("METAR: "+displayTemp,"lo");
+    }
+  }catch(e){
+    try{
+      const r2=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${CITY.lat}&longitude=${CITY.lon}&current=temperature_2m&timezone=${CITY.tz}`,{signal:AbortSignal.timeout(8000)});
+      const d2=await r2.json();
+      if(d2.current){metarTemp=d2.current.temperature_2m;const dt=CITY.unit==="F"?cToF(metarTemp).toFixed(0)+"°F":metarTemp+"°C";$("curT").textContent=dt;$("curTs").textContent="Open-Meteo (not METAR)"}
+      log("METAR failed, using Open-Meteo","lw");
+    }catch(e2){log("Weather: "+e2.message,"le")}
+  }
+}
+
+async function fetchPoly(){
+  const order=[pxi,...[0,1,2].filter(i=>i!==pxi)];
+  const cacheBust=Date.now(); // prevent proxy caching across cities
+  for(const idx of order){
+    try{
+      const baseUrl=PX[idx](ACTIVE_DATE.polyUrl);
+      const sep=baseUrl.includes("?")?"%26":"?";
+      const url=baseUrl+(idx>0?sep+"_t="+cacheBust:""); // add cache-buster for proxies
+      const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
+      if(!r.ok)throw new Error("HTTP "+r.status);
+      const d=JSON.parse(await r.text()),ev=Array.isArray(d)?d[0]:d;
+      if(!ev||!ev.markets)throw new Error("No markets");
+      const p={},tk={},bracketLabels=[];
+      for(const m of ev.markets){
+        const nm=m.groupItemTitle||"";if(!nm)continue;
+        let op;try{op=JSON.parse(m.outcomePrices||"[]")}catch(e){continue}
+        if(op[0])p[nm]=parseFloat(op[0]);
+        try{const tids=JSON.parse(m.clobTokenIds||"[]");if(tids[0])tk[nm]=tids[0]}catch(e){}
+        bracketLabels.push(nm);
+      }
+      if(!Object.keys(p).length)throw new Error("Empty");
+      // Validate: check slug in response matches expected city
+      const evSlug=ev.slug||"";
+      if(evSlug&&!evSlug.includes(CITY.polyCity)){
+        log("Poly: slug mismatch! Got "+evSlug+", expected "+CITY.polyCity,"le");
+        throw new Error("Slug mismatch");
+      }
+      prices=p;
+      // Sort brackets by their temperature value
+      bracketLabels.sort((a,b)=>{
+        const pa=parseBracket(a),pb=parseBracket(b);
+        const va=pa?(pa.val??pa.low??pa.high??0):0;
+        const vb=pb?(pb.val??pb.low??pb.high??0):0;
+        return va-vb;
+      });
+      B=bracketLabels;
+      if(Object.keys(tk).length){TOKENS=tk;log("Token IDs: "+Object.keys(tk).length+" brackets","lo")}
+      pxi=idx;log("Prices: "+B.length+" brackets via proxy "+idx+" ("+CITY.name+")","lo");return;
+    }catch(e){log("Proxy "+idx+": "+e.message,"le")}
+  }
+  // All proxies failed - ensure brackets are cleared
+  B=[];prices={};TOKENS={};
+  log("Poly: all proxies failed for "+CITY.name+" "+ACTIVE_DATE.displayShort,"le");
+}
+
+async function fetchBooks(){
+  if(!Object.keys(TOKENS).length){log("No token IDs — skipping books","lw");return}
+  let ok=0;
+  for(const[name,tid] of Object.entries(TOKENS)){
+    try{
+      const url=`https://clob.polymarket.com/book?token_id=${tid}`;
+      const r=await fetch(url,{signal:AbortSignal.timeout(8000)});if(!r.ok)continue;
+      const d=await r.json();
+      const bids=(d.bids||[]).sort((a,b)=>parseFloat(b.price)-parseFloat(a.price));
+      const asks=(d.asks||[]).sort((a,b)=>parseFloat(a.price)-parseFloat(b.price));
+      const bb=bids.length?parseFloat(bids[0].price):0;
+      const ba=asks.length?parseFloat(asks[0].price):1;
+      books[name]={bids,asks,bb,ba,mid:(bb+ba)/2,spd:ba-bb,spdPct:(bb+ba)>0?(ba-bb)/((bb+ba)/2)*100:0,
+        bidD:bids.reduce((s,x)=>s+parseFloat(x.size),0),askD:asks.reduce((s,x)=>s+parseFloat(x.size),0),
+        last:parseFloat(d.last_trade_price||0)};
+      ok++;
+    }catch(e){}
+  }
+  if(ok)log("Books: "+ok+"/"+Object.keys(TOKENS).length,"lo");
+}
+
+async function fetchGas(){
+  try{
+    const[gR,pR]=await Promise.all([
+      fetch("https://gasstation.polygon.technology/v2",{signal:AbortSignal.timeout(5000)}),
+      fetch("https://api.coingecko.com/api/v3/simple/price?ids=matic-network&vs_currencies=usd",{signal:AbortSignal.timeout(5000)})
+    ]);
+    const g=await gR.json(),pp=await pR.json();
+    const totalGwei=g.estimatedBaseFee+g.standard.maxPriorityFee;
+    polPrice=pp['matic-network']?.usd||0.35;
+    gasCostUsd=200000*totalGwei/1e9*polPrice;
+    log("Gas: $"+gasCostUsd.toFixed(4)+"/trade","lo");
+  }catch(e){gasCostUsd=0.03;log("Gas: fallback $0.03","lw")}
+}
+
+// ══════════════════════════════════════════════════════════
+// RENDER
+// ══════════════════════════════════════════════════════════
+function render(){
+  if(!B.length||!Object.keys(prices).length)return;
+  if(!Object.keys(corrProbs).length&&!Object.keys(rawProbs).length)return;
+  const useRaw=!Object.keys(corrProbs).length; // if no corrected, use raw
+  const ma=window._modelAgreement||{};
+  const A=B.map(b=>{
+    const rawP=rawProbs[b]||0,corP=(useRaw?rawP:corrProbs[b])||0,bk=books[b],mkt=prices[b]||0;
+    const ask=bk?bk.ba:mkt,bid=bk?bk.bb:0,mid=bk?bk.mid:mkt;
+    const rawEdge=corP-mid,trueEdge=corP-ask;
+    const pb=parseBracket(b);
+    const deg=pb?(pb.val??pb.low??pb.high??0):0;
+    const modelVotes=ma[deg]||0;
+    // Check neighboring degrees for range brackets
+    let mv=modelVotes;
+    if(pb&&pb.type==="range"){for(let d=pb.low;d<=pb.high;d++)mv=Math.max(mv,ma[d]||0)}
+    let bet=0,ev=0,sig="PASS",fFull=0;
+    if(ask>0&&ask<1&&corP>0){
+      const bo=(1-ask)/ask,q=1-corP;
+      fFull=(bo*corP-q)/bo;
+      const fK=Math.max(0,fFull*KELLY_FRAC);
+      bet=Math.round(fK*BR*100)/100;
+      ev=bet>0?Math.round(bet*(corP/ask-1)*100)/100:0;
+    }
+    if(trueEdge>.03)sig="BUY";else if(trueEdge>0)sig="LEAN";
+    const row={bracket:b,rawP,corP,mktP:prices[b]||0,bid,ask,mid,spread:bk?bk.spd:0,
+      rawEdge,trueEdge,bet,ev,sig,fFull,bidD:bk?bk.bidD:0,askD:bk?bk.askD:0,last:bk?bk.last:0,modelVotes:mv};
+    if(LIVE_MODE&&(sig==="BUY"||sig==="LEAN")){
+      const filt=applyFilters(row);
+      if(!filt.pass){row.sig="FILTERED";row.filterReasons=filt.reasons;row.bet=0;row.ev=0}
+    }
+    return row;
+  });
+
+  // Signal banner
+  const actionable=A.filter(a=>a.sig==="BUY").sort((a,b)=>b.trueEdge-a.trueEdge);
+  const filtered=A.filter(a=>a.sig==="FILTERED");
+  const best=actionable[0];
+  const bn=$("sigB");
+  if(best){
+    bn.style.borderColor="rgba(22,163,74,.2)";$("sigT").style.color="var(--gn)";
+    $("sigT").textContent=LIVE_MODE?"BUY (strict filters passed)":"BUY YES (bias-corrected, ⅓ Kelly)";
+    $("sigN").textContent=best.bracket;
+    $("sigD").innerHTML=[
+      ["Corrected",(best.corP*100).toFixed(1)+"%","var(--gn)"],
+      ["Ask",(best.ask*100).toFixed(1)+"¢","var(--tx)"],
+      ["True Edge","+"+(best.trueEdge*100).toFixed(1)+"pt","var(--gn)"],
+      ["Models",best.modelVotes+"/"+(CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0)),"var(--gn)"],
+      ["⅓Kelly","$"+best.bet.toFixed(2),"var(--gn)"],
+      ["E[Profit]","+$"+best.ev.toFixed(2),"var(--gn)"],
+    ].map(([l,v,c])=>`<div class="si"><div class="si-l">${l}</div><div class="si-v" style="color:${c}">${v}</div></div>`).join("");
+  }else if(LIVE_MODE&&filtered.length>0){
+    bn.style.borderColor="var(--bd)";$("sigT").style.color="var(--dm)";
+    $("sigT").textContent=filtered.length+" signal(s) filtered by live-mode rules";
+    $("sigN").textContent="NO TRADE";
+    $("sigD").innerHTML=filtered.map(f=>`<div style="font-size:10px;color:var(--dm);margin:2px 0">${f.bracket}: ${(f.filterReasons||[]).join(" · ")}</div>`).join("");
+  }else{
+    bn.style.borderColor="var(--bd)";$("sigT").style.color="var(--dm)";
+    $("sigT").textContent="No actionable signal";$("sigN").textContent="—";$("sigD").innerHTML="";
+  }
+
+  // Main table
+  let h="",tB=0,tE=0;
+  for(const a of A){
+    const hl=a.sig==="BUY"||a.sig==="LEAN";
+    const isF=a.sig==="FILTERED";
+    const tec=a.trueEdge>.03?"var(--gn)":a.trueEdge>0?"rgba(22,163,74,.5)":a.trueEdge<-.03?"var(--rd)":"var(--dm)";
+    let tg;
+    if(a.sig==="BUY")tg='<span class="tb tb-b">BUY</span>';
+    else if(a.sig==="LEAN")tg='<span class="tb tb-l">LEAN</span>';
+    else if(isF)tg='<span style="color:#ff9800;font-size:8px;padding:2px 5px;border-radius:3px;background:rgba(255,152,0,.08)">BLOCKED</span>';
+    else tg='<span style="color:var(--dm);font-size:9px">—</span>';
+    if(a.bet>0){tB+=a.bet;tE+=a.ev}
+    const totalModels=CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0);
+    const mvPct=totalModels>0?a.modelVotes/totalModels:0;
+    const mvC=mvPct>=0.75?"var(--gn)":mvPct>=0.5?"var(--am)":"var(--rd)";
+    const ft=isF&&a.filterReasons?` title="${a.filterReasons.join('; ')}"`:"";
+    h+=`<tr class="${hl?"rh":""}"${ft}><td>${a.bracket}</td>
+    <td style="text-align:center">${tg}</td>
+    <td style="color:var(--dm)">${(a.rawP*100).toFixed(1)}%</td>
+    <td style="color:var(--tx);font-weight:500">${(a.corP*100).toFixed(1)}%</td>
+    <td style="color:var(--dm)">${(a.mktP*100).toFixed(0)}%</td>
+    <td style="color:var(--dm)">${a.bid.toFixed(3)}</td><td>${a.ask.toFixed(3)}</td>
+    <td style="color:var(--dm)">${a.spread>0?(a.spread*100).toFixed(1)+"¢":"—"}</td>
+    <td style="color:${a.rawEdge>0?"rgba(22,163,74,.5)":"var(--dm)"}">${a.rawEdge>=0?"+":""}${(a.rawEdge*100).toFixed(1)}</td>
+    <td style="color:${tec};font-weight:700">${a.trueEdge>=0?"+":""}${(a.trueEdge*100).toFixed(1)}</td>
+    <td style="color:${mvC};font-size:10px">${a.modelVotes}/${CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0)}</td>
+    <td style="color:${a.bet>0?"var(--gn)":"var(--dm)"}">${a.bet>0?"$"+a.bet.toFixed(2):"—"}</td>
+    <td style="color:${a.ev>0?"var(--gn)":"var(--dm)"}">${a.ev>0?"+$"+a.ev.toFixed(2):"—"}</td></tr>`;
+  }
+  $("tbl").innerHTML=h;
+  $("totals").innerHTML=tB>0?
+    `<span>Wagered: <b>$${tB.toFixed(2)}</b></span><span>E[Profit]: <b style="color:var(--gn)">+$${tE.toFixed(2)}</b></span><span>E[ROI]: <b style="color:var(--gn)">+${((tE/tB)*100).toFixed(0)}%</b></span><span style="color:var(--dm)">Gas: $${gasCostUsd.toFixed(3)} | Fee: $0</span>`:
+    '<span style="color:var(--dm)">No positions after analysis</span>';
+
+  // Histogram
+  const vis=B.filter(b=>(rawProbs[b]||0)>.001||(corrProbs[b]||0)>.001||(prices[b]||0)>.01);
+  if(vis.length){$("histPanel").style.display="block";
+    const mxP=0.40;
+    $("hist").innerHTML=vis.map(b=>{
+      const rp=rawProbs[b]||0,cp=(useRaw?rp:corrProbs[b])||0,mp=prices[b]||0;
+      const rH=Math.max(rp>.005?2:0,rp/mxP*100),cH=Math.max(cp>.005?2:0,cp/mxP*100),mH=Math.max(mp>.005?2:0,mp/mxP*100);
+      return`<div class="hc"><div class="hp">${(cp*100).toFixed(0)}%</div><div class="hbs"><div class="hb1" style="height:${rH}%;background:var(--h1);opacity:.45"></div><div class="hb2" style="height:${cH}%;background:var(--h2);opacity:.7"></div><div class="hb3" style="height:${mH}%;background:rgba(26,26,46,.15)"></div></div><div class="hl">${bracketShortLabel(b)}</div></div>`;
+    }).join("");
+  }else{$("histPanel").style.display="none"}
+
+  $("ut").textContent=new Date().toLocaleTimeString();
+
+  // Entry timing (live mode)
+  const et=$("entryTiming");
+  if(LIVE_MODE){
+    et.style.display="block";const hr=new Date().getUTCHours();
+    let msg="",col="",bg="";
+    if(hr>=15&&hr<20){msg="OPTIMAL ENTRY — 12Z data available";col="var(--gn)";bg="rgba(22,163,74,.04)"}
+    else if(hr>=20&&hr<23){msg="LATE ENTRY — limit orders may not fill";col="var(--dm)";bg="rgba(39,39,42,.5)"}
+    else if(hr>=10&&hr<15){msg="EARLY — wait for 12Z data (15:00-20:00 UTC)";col="var(--dm)";bg="rgba(39,39,42,.5)"}
+    else{msg="OFF-HOURS — best window: 15:00-20:00 UTC";col="var(--rd)";bg="rgba(220,38,38,.04)"}
+    et.style.color=col;et.style.borderColor=col;et.style.background=bg;et.textContent=msg;
+  }else{et.style.display="none"}
+  $("stopLossWarn").style.display="none";
+}
+
+// ══════════════════════════════════════════════════════════
+// PAPER TRADE P&L
+// ══════════════════════════════════════════════════════════
+const TRADE_LEDGER={
+  "EGLC:2026-02-21":{
+    trades:[
+      {bracket:"11°C",signal:"BUY",corrP:.065,ask:.019,vwap:.0251,contracts:93,wager:2.34,ev:3.70,slip:"+3214bp"},
+      {bracket:"12°C",signal:"BUY",corrP:.222,ask:.073,vwap:.0749,contracts:107,wager:8.02,ev:15.79,slip:"+264bp"},
+      {bracket:"13°C",signal:"BUY",corrP:.297,ask:.260,vwap:.2600,contracts:9,wager:2.34,ev:0.33,slip:"0bp"},
+    ],
+    total:12.69,
+    result:{resolved:true,winner:"14°C",pnl:-12.69}
+  }
+};
+
+function ledgerKey(){return CITY.icao+":"+ACTIVE_DATE.dateStr}
+function getActiveTrades(){return(TRADE_LEDGER[ledgerKey()]||{trades:[]}).trades}
+function getActiveTotal(){return(TRADE_LEDGER[ledgerKey()]||{total:0}).total}
+function getActiveResult(){return(TRADE_LEDGER[ledgerKey()]||{}).result||null}
+function hasActiveTrades(){return getActiveTrades().length>0}
+
+function ptPhase(){
+  const now=new Date(),s=new Date(ACTIVE_DATE.startUTC),e=new Date(ACTIVE_DATE.endUTC);
+  const stored=getActiveResult();
+  if(stored&&stored.resolved){ptResolved=true;ptWinner=stored.winner}
+  if(now<s)return"PRE";if(now<e)return"LIVE";return"POST";
+}
+
+function ptCalcPnL(){
+  if(!ptWinner)return 0;
+  let pnl=0;for(const t of getActiveTrades())pnl+=(t.bracket===ptWinner)?(t.contracts*1-t.wager):(-t.wager);
+  return pnl;
+}
+function ptCalcUnrealizedPnL(){
+  const trades=getActiveTrades();let tU=0,tMV=0,tC=0;const details=[];
+  for(const t of trades){
+    const bk=books[t.bracket],curBid=bk?bk.bb:(prices[t.bracket]||0);
+    const mV=t.contracts*curBid,c=t.wager,u=mV-c;
+    tU+=u;tMV+=mV;tC+=c;details.push({bracket:t.bracket,curBid,mktValue:mV,cost:c,unrealized:u});
+  }
+  return{total:tU,details,mktValue:tMV,cost:tC};
+}
+
+async function ptFetchMetar(){
+  const metarUrl=`https://aviationweather.gov/api/data/metar?ids=${CITY.icao}&format=json&hours=72`;
+  try{
+    const r=await fetch(PX[0](metarUrl),{signal:AbortSignal.timeout(12000)});if(!r.ok)return;
+    const data=JSON.parse(await r.text());
+    // Filter by LOCAL date using obsTime (timezone-aware)
+    const dayObs=data.filter(m=>ACTIVE_DATE.metarLocalDateFilter(m.obsTime));
+    if(dayObs.length){
+      const temps=dayObs.map(m=>m.temp).filter(t=>t!=null);
+      if(temps.length){
+        const mxC=Math.max(...temps);metarDayMax=CITY.unit==="F"?Math.round(cToF(mxC)):mxC;
+        $("dH").textContent=metarDayMax+unitLabel();
+        $("dHs").textContent=temps.length+" readings · "+ACTIVE_DATE.displayShort;
+        log(ACTIVE_DATE.displayShort+" METAR high: "+metarDayMax+unitLabel()+" ("+temps.length+" obs)","lo");
+      }
+    }
+  }catch(e){}
+}
+
+async function ptCheckResolution(){
+  if(ptResolved)return;if(ptPhase()!=="POST")return;
+  try{
+    const r=await fetch(PX[pxi](ACTIVE_DATE.polyUrl),{signal:AbortSignal.timeout(10000)});
+    const ev=(JSON.parse(await r.text()))[0]||{};
+    for(const m of(ev.markets||[])){
+      const op=JSON.parse(m.outcomePrices||"[]");
+      if(op[0]&&parseFloat(op[0])>=0.99){ptWinner=m.groupItemTitle;ptResolved=true;log("RESOLVED: "+ptWinner+" won!","lo");break}
+    }
+  }catch(e){}
+  const ft=new Date(ACTIVE_DATE.endUTC);ft.setUTCHours(ft.getUTCHours()+6);
+  if(!ptResolved&&metarDayMax!==null&&new Date()>ft){
+    ptWinner=tempToBracket(metarDayMax);ptResolved=true;log("Resolved via METAR (unofficial): "+ptWinner,"lw");
+  }
+}
+
+function ptRender(){
+  const phase=ptPhase(),trades=getActiveTrades(),activeTotal=getActiveTotal(),hasTrades=trades.length>0;
+  const bar=$("pnlBar"),dot=$("pnlDot"),txt=$("pnlStatus");
+  if(!hasTrades){
+    bar.className="pnl-bar pnl-wait";dot.style.background="var(--dm)";
+    txt.textContent="NO POSITIONS — "+ACTIVE_DATE.displayShort;
+  }else if(ptResolved){
+    const pnl=ptCalcPnL();
+    if(pnl>0){bar.className="pnl-bar pnl-win";dot.style.background="var(--gn)";txt.textContent="RESOLVED ✓ — "+ptWinner+" — P&L: +$"+pnl.toFixed(2)}
+    else{bar.className="pnl-bar pnl-lose";dot.style.background="var(--rd)";txt.textContent="RESOLVED ✗ — "+ptWinner+" — P&L: -$"+Math.abs(pnl).toFixed(2)}
+  }else if(phase==="PRE"){
+    const hrs=Math.max(0,Math.floor((new Date(ACTIVE_DATE.startUTC)-new Date())/3600000));
+    bar.className="pnl-bar pnl-wait";dot.style.background="var(--dm)";
+    const u=ptCalcUnrealizedPnL(),uS=u.mktValue>0?" · Unrealized: "+(u.total>=0?"+":"")+u.total.toFixed(2):"";
+    txt.textContent="WAITING — starts in ~"+hrs+"h — "+trades.length+" positions ($"+activeTotal.toFixed(2)+" wagered)"+uS;
+  }else if(phase==="LIVE"){
+    bar.className="pnl-bar pnl-live";dot.style.background="var(--tx)";
+    txt.textContent="LIVE — "+ACTIVE_DATE.displayShort+" — METAR high: "+(metarDayMax!==null?metarDayMax+unitLabel()+" → "+tempToBracket(metarDayMax):"awaiting data");
+  }else{
+    bar.className="pnl-bar pnl-wait";dot.style.background="var(--dm)";
+    txt.textContent="POST — awaiting finalization"+(metarDayMax!==null?" · METAR high was "+metarDayMax+unitLabel():"");
+  }
+
+  const uPnL=ptCalcUnrealizedPnL();let html="";
+  if(!hasTrades){
+    html=`<tr><td colspan="10" style="text-align:center;color:var(--dm);padding:16px">No paper trades for ${ACTIVE_DATE.displayShort}</td></tr>`;
+  }else{
+    for(let i=0;i<trades.length;i++){
+      const t=trades[i],u=uPnL.details[i];
+      const isWin=ptResolved&&t.bracket===ptWinner,isLose=ptResolved&&t.bracket!==ptWinner;
+      const leading=!ptResolved&&metarDayMax!==null&&t.bracket===tempToBracket(metarDayMax);
+      let rc="—",rcol="var(--dm)",cls="";
+      if(ptResolved){
+        if(isWin){rc="+$"+(t.contracts-t.wager).toFixed(2);rcol="var(--gn)";cls="pos-w"}
+        else{rc="-$"+t.wager.toFixed(2);rcol="var(--rd)";cls="pos-l"}
+      }else if(u&&u.curBid>0){
+        rc=(u.unrealized>=0?"+":"")+u.unrealized.toFixed(2);rcol=u.unrealized>=0?"var(--gn)":"var(--rd)";
+        if(leading)rc+=" ⟵";
+      }else if(leading){rc="⟵ leading";rcol="var(--tx)"}
+      html+=`<tr class="${cls}"><td style="color:${isWin?"var(--gn)":isLose?"var(--rd)":"var(--tx)"}">${t.bracket}</td>
+      <td style="text-align:center"><span style="font-size:8px;padding:2px 5px;border-radius:3px;background:rgba(22,163,74,.06);color:var(--gn)">${t.signal}</span></td>
+      <td>${(t.corrP*100).toFixed(1)}%</td><td>${(t.ask*100).toFixed(1)}¢</td>
+      <td style="color:${t.vwap>t.ask?"var(--rd)":"var(--dm)"}">${((t.vwap||t.ask)*100).toFixed(1)}¢</td>
+      <td style="font-size:9px;color:${u&&u.curBid>0?"var(--tx)":"var(--dm)"}">${u&&u.curBid>0?(u.curBid*100).toFixed(1)+"¢":t.slip||"—"}</td>
+      <td>${t.contracts}</td><td>$${t.wager.toFixed(2)}</td><td style="color:var(--gn)">+$${t.ev.toFixed(2)}</td>
+      <td style="color:${rcol};font-weight:700">${rc}</td></tr>`;
+    }
+  }
+  $("ptTbl").innerHTML=html;
+  const totalCtrs=trades.reduce((s,t)=>s+t.contracts,0),totalEv=trades.reduce((s,t)=>s+t.ev,0);
+  $("ptCtrs").textContent=hasTrades?totalCtrs:"—";
+  $("ptWager").textContent=hasTrades?"$"+activeTotal.toFixed(2):"—";
+  $("ptEv").textContent=hasTrades?"+$"+totalEv.toFixed(2):"—";
+  if(!hasTrades){$("ptTotal").textContent="—";$("ptTotal").style.color="var(--dm)"}
+  else if(ptResolved){const p=ptCalcPnL();$("ptTotal").textContent=(p>=0?"+":"-")+"$"+Math.abs(p).toFixed(2);$("ptTotal").style.color=p>=0?"var(--gn)":"var(--rd)"}
+  else if(uPnL.total!==0||uPnL.mktValue>0){$("ptTotal").textContent=(uPnL.total>=0?"+":"")+uPnL.total.toFixed(2);$("ptTotal").style.color=uPnL.total>=0?"var(--gn)":"var(--rd)"}
+
+  $("pnlBigBox").style.display="none";
+  if(hasTrades&&!ptResolved&&uPnL.mktValue>0){
+    $("pnlBigBox").style.display="block";
+    $("pnlBigVal").textContent=(uPnL.total>=0?"+":"")+uPnL.total.toFixed(2);
+    $("pnlBigVal").style.color=uPnL.total>=0?"var(--gn)":"var(--rd)";
+    const pct=uPnL.cost>0?(uPnL.total/uPnL.cost*100):0;
+    $("pnlBigSub").textContent="Unrealized · Mkt: $"+uPnL.mktValue.toFixed(2)+" · Cost: $"+uPnL.cost.toFixed(2)+" · "+((pct>=0?"+":"")+pct.toFixed(0))+"%";
+    $("pnlBigLabel").textContent="Unrealized P&L";
+  }
+  if(ptResolved&&hasTrades){
+    $("pnlBigBox").style.display="block";
+    const p=ptCalcPnL(),roi=activeTotal>0?p/activeTotal*100:0;
+    $("pnlBigLabel").textContent="Realized P&L";
+    $("pnlBigVal").textContent=(p>=0?"+":"-")+"$"+Math.abs(p).toFixed(2);
+    $("pnlBigVal").style.color=p>=0?"var(--gn)":"var(--rd)";
+    $("pnlBigSub").textContent="ROI: "+(roi>=0?"+":"")+roi.toFixed(0)+"% · Winner: "+ptWinner+" · Wagered: $"+activeTotal.toFixed(2);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// REFRESH LOOP
+// ══════════════════════════════════════════════════════════
+let _marketsDiscovered=false;
+async function refresh(){
+  $("badge").textContent="Refreshing...";
+  if(!_marketsDiscovered){
+    try{await Promise.race([discoverMarkets(),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),10000))])}
+    catch(e){
+      log("Market discovery failed ("+e.message+"), using known dates","lw");
+      const today=new Date();today.setUTCHours(12,0,0,0);
+      const todayStr=today.toISOString().split("T")[0];
+      const yd=new Date(today);yd.setUTCDate(yd.getUTCDate()-1);
+      const tm=new Date(today);tm.setUTCDate(tm.getUTCDate()+1);
+      ALL_DATES=[yd,today,tm].map(d=>buildDateConfig(d.toISOString().split("T")[0]));
+      ACTIVE_DATE=buildDateConfig(todayStr);
+    }
+    _marketsDiscovered=true;renderDateTabs();
+  }
+  $("hdrTitle").innerHTML=CITY.name+" High Temp <span>· "+ACTIVE_DATE.display+"</span>";
+  // Fetch Poly first (gets brackets + token IDs), then ensemble (needs brackets for range)
+  await fetchPoly();
+  await Promise.all([fetchEnsemble(),fetchMetar(),fetchGas(),ptFetchMetar()]);
+  await fetchBooks();
+  await ptCheckResolution();
+  render();ptRender();cd=RS;
+}
+
+// INIT
+renderCityNav();
+selectCity("london"); // default
+setInterval(()=>{cd--;$("badge").textContent="Auto-refresh "+cd+"s";if(cd<=0)refresh()},1000);
+</script>
+</body>
+</html>

@@ -1,7 +1,10 @@
 .env
 state.json
+control.json
+pending_signals.json
 trade_log.jsonl
 bot.log
 __pycache__/
 *.pyc
 venv/
+snapshots/

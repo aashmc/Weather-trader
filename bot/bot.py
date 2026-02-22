@@ -45,28 +45,63 @@ def load_control() -> dict:
             return json.loads(CONTROL_FILE.read_text())
         except (json.JSONDecodeError, IOError):
             pass
-    return {"dry_run": True, "paused": False}
+    return {"mode": "dryrun", "paused": False}
+    # modes: "dryrun" = log only, "manual" = approve each, "auto" = trade all
 
 
 def save_control(ctrl: dict):
     CONTROL_FILE.write_text(json.dumps(ctrl, indent=2))
 
 
+def get_mode() -> str:
+    return load_control().get("mode", "dryrun")
+
+
 def is_dry_run() -> bool:
-    return load_control().get("dry_run", True)
+    return get_mode() == "dryrun"
 
 
 def is_paused() -> bool:
     return load_control().get("paused", False)
 
 
-def set_mode(dry_run: bool | None = None, paused: bool | None = None):
+def set_mode(mode: str | None = None, paused: bool | None = None):
     ctrl = load_control()
-    if dry_run is not None:
-        ctrl["dry_run"] = dry_run
+    if mode is not None:
+        ctrl["mode"] = mode
     if paused is not None:
         ctrl["paused"] = paused
     save_control(ctrl)
+
+
+# ══════════════════════════════════════════════════════
+# PENDING SIGNALS — queue for manual approval
+# ══════════════════════════════════════════════════════
+PENDING_FILE = Path("pending_signals.json")
+
+
+def load_pending() -> list[dict]:
+    if PENDING_FILE.exists():
+        try:
+            return json.loads(PENDING_FILE.read_text())
+        except (json.JSONDecodeError, IOError):
+            pass
+    return []
+
+
+def save_pending(signals: list[dict]):
+    PENDING_FILE.write_text(json.dumps(signals, indent=2, default=str))
+
+
+def clear_pending():
+    save_pending([])
+
+
+def add_pending(sig: dict):
+    pending = load_pending()
+    sig["pending_id"] = len(pending) + 1
+    pending.append(sig)
+    save_pending(pending)
 
 
 # ══════════════════════════════════════════════════════
@@ -111,22 +146,68 @@ async def poll_telegram_commands():
                 await send_telegram("▶️ <b>BOT RESUMED</b>\nBack to scanning for signals")
 
             elif text == "/dryrun":
-                set_mode(dry_run=True)
+                set_mode(mode="dryrun")
                 await send_telegram("🧪 <b>DRY RUN MODE</b>\nLogging signals but NOT placing real orders")
 
-            elif text == "/live":
-                set_mode(dry_run=False)
-                await send_telegram("🔴 <b>LIVE TRADING MODE</b>\n⚠️ Real orders will be placed!")
+            elif text == "/manual":
+                set_mode(mode="manual")
+                await send_telegram(
+                    "👆 <b>MANUAL MODE</b>\n"
+                    "Signals will be queued — you approve each one.\n"
+                    "Use /buy_1, /buy_2 etc. or /buyall"
+                )
+
+            elif text == "/auto":
+                set_mode(mode="auto")
+                await send_telegram("🔴 <b>AUTO TRADING MODE</b>\n⚠️ All signals will be traded automatically!")
+
+            elif text.startswith("/buy_"):
+                # Approve a specific signal: /buy_1, /buy_2, etc.
+                try:
+                    sig_id = int(text.replace("/buy_", ""))
+                    await execute_pending_signal(sig_id)
+                except ValueError:
+                    await send_telegram("❌ Invalid signal ID. Use /buy_1, /buy_2 etc.")
+
+            elif text == "/buyall":
+                pending = load_pending()
+                if not pending:
+                    await send_telegram("No pending signals to execute.")
+                else:
+                    for sig in pending:
+                        await execute_pending_signal(sig["pending_id"])
+
+            elif text == "/signals":
+                pending = load_pending()
+                if not pending:
+                    await send_telegram("No pending signals right now.")
+                else:
+                    lines = ["📋 <b>PENDING SIGNALS</b>\n"]
+                    for s in pending:
+                        lines.append(
+                            f"  /buy_{s['pending_id']} → {s['city']} {s['date']} "
+                            f"<b>{s['bracket']}</b> @ {s['ask']*100:.1f}¢ "
+                            f"edge +{s['true_edge']*100:.1f}pt ${s['kelly_bet']:.2f}"
+                        )
+                    lines.append(f"\n  /buyall — execute all {len(pending)} signals")
+                    await send_telegram("\n".join(lines))
+
+            elif text == "/clear":
+                clear_pending()
+                await send_telegram("🗑 Pending signals cleared.")
 
             elif text == "/status":
                 ctrl = load_control()
                 portfolio = get_portfolio_summary()
-                mode = "🧪 DRY RUN" if ctrl["dry_run"] else "🔴 LIVE"
-                state = "⏸ PAUSED" if ctrl["paused"] else "▶️ RUNNING"
+                pending = load_pending()
+                mode_map = {"dryrun": "🧪 DRY RUN", "manual": "👆 MANUAL", "auto": "🔴 AUTO"}
+                mode = mode_map.get(ctrl.get("mode", "dryrun"), "🧪 DRY RUN")
+                state = "⏸ PAUSED" if ctrl.get("paused") else "▶️ RUNNING"
                 await send_telegram(
                     f"📊 <b>STATUS</b>\n"
                     f"  Mode: {mode}\n"
                     f"  State: {state}\n"
+                    f"  Pending signals: {len(pending)}\n"
                     f"  Active positions: {portfolio['active_positions']}\n"
                     f"  Active exposure: ${portfolio['active_exposure']:.2f}\n"
                     f"  Total trades: {portfolio['total_trades']}\n"
@@ -135,17 +216,84 @@ async def poll_telegram_commands():
 
             elif text == "/help":
                 await send_telegram(
-                    "🤖 <b>COMMANDS</b>\n"
-                    "  /pause — stop trading\n"
-                    "  /resume — resume trading\n"
-                    "  /dryrun — log only, no real orders\n"
-                    "  /live — enable real trading\n"
-                    "  /status — show current state\n"
-                    "  /help — show this message"
+                    "🤖 <b>COMMANDS</b>\n\n"
+                    "<b>Modes:</b>\n"
+                    "  /dryrun — log only, no orders\n"
+                    "  /manual — approve each trade\n"
+                    "  /auto — trade all signals automatically\n\n"
+                    "<b>Trading:</b>\n"
+                    "  /signals — view pending signals\n"
+                    "  /buy_1 — approve signal #1\n"
+                    "  /buyall — approve all pending\n"
+                    "  /clear — discard pending signals\n\n"
+                    "<b>Control:</b>\n"
+                    "  /pause — stop bot\n"
+                    "  /resume — resume bot\n"
+                    "  /status — show current state"
                 )
 
     except Exception as e:
         log.debug(f"Telegram poll error: {e}")
+
+
+async def execute_pending_signal(sig_id: int):
+    """Execute a pending signal by its ID."""
+    pending = load_pending()
+    sig = None
+    for s in pending:
+        if s.get("pending_id") == sig_id:
+            sig = s
+            break
+
+    if not sig:
+        await send_telegram(f"❌ Signal #{sig_id} not found or already executed.")
+        return
+
+    token_id = sig.get("token_id")
+    if not token_id:
+        await send_telegram(f"❌ No token ID for signal #{sig_id}")
+        return
+
+    # Place the order
+    order_result = await place_limit_order(
+        token_id=token_id,
+        price=sig["ask"],
+        size=sig["contracts"],
+        bracket_label=sig["bracket"],
+    )
+
+    if order_result["success"]:
+        record_trade(
+            city_name=sig["city"],
+            date_str=sig["date"],
+            bracket=sig["bracket"],
+            signal="BUY",
+            corrected_prob=sig["corrected_prob"],
+            ask=sig["ask"],
+            kelly_bet=sig["kelly_bet"],
+            contracts=sig["contracts"],
+            edge=sig["true_edge"],
+            model_votes=sig["model_votes"],
+            order_id=order_result["order_id"],
+        )
+
+        await send_telegram(
+            f"✅ <b>ORDER PLACED: #{sig_id}</b>\n"
+            f"  {sig['city']} {sig['date']} — <b>{sig['bracket']}</b>\n"
+            f"  @ {sig['ask']*100:.1f}¢ x{sig['contracts']} = ${sig['kelly_bet']:.2f}\n"
+            f"  Order ID: {order_result['order_id'][:20]}..."
+        )
+
+        log.info(f"✅ Manual order: {sig['bracket']} @ {sig['ask']:.3f} x{sig['contracts']}")
+    else:
+        await send_telegram(
+            f"❌ <b>ORDER FAILED: #{sig_id}</b>\n"
+            f"  {sig['bracket']} — {order_result['error']}"
+        )
+
+    # Remove from pending
+    pending = [s for s in pending if s.get("pending_id") != sig_id]
+    save_pending(pending)
 
 # ══════════════════════════════════════════════════════
 # LOGGING SETUP
@@ -248,11 +396,17 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
 
         # 6. Check if trading allowed
         tradeable, reason = can_trade()
-        dry_run = is_dry_run()
+        mode = get_mode()
 
-        # 7. Place orders for BUY signals (or log in dry run)
+        # 7. Handle signals based on mode
         trades_placed = []
         if tradeable and signals:
+            # Clear old pending for this city/date before adding new ones
+            if mode == "manual":
+                pending = load_pending()
+                pending = [p for p in pending if not (p.get("city") == city_name and p.get("date") == date_str)]
+                save_pending(pending)
+
             for sig in signals:
                 bracket = sig["bracket"]
                 token_id = token_ids.get(bracket)
@@ -261,7 +415,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                     log.warning(f"No token ID for {bracket}, skipping")
                     continue
 
-                if dry_run:
+                if mode == "dryrun":
                     # DRY RUN — log everything but don't place order
                     log.info(
                         f"🧪 DRY RUN: WOULD BUY {bracket} @ {sig['ask']:.3f} "
@@ -269,20 +423,51 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                         f"(edge +{sig['true_edge']*100:.1f}pt)"
                     )
                     await send_telegram(
-                        f"🧪 <b>DRY RUN SIGNAL: {city_name} {date_str}</b>\n"
-                        f"  Would buy YES <b>{bracket}</b> @ {sig['ask']*100:.1f}¢\n"
-                        f"  Edge: +{sig['true_edge']*100:.1f}pt | Kelly: ${sig['kelly_bet']:.2f}\n"
-                        f"  Contracts: {sig['contracts']} | Models: {sig['model_votes']}/{city['total_models']}\n"
-                        f"  E[Profit]: +${sig['expected_profit']:.2f}\n"
-                        f"  ⚡ Send /live to enable real trading"
+                        f"🧪 <b>DRY RUN: {city_name} {date_str}</b>\n"
+                        f"  <b>{bracket}</b> @ {sig['ask']*100:.1f}¢\n"
+                        f"  Edge: +{sig['true_edge']*100:.1f}pt | ${sig['kelly_bet']:.2f}\n"
+                        f"  Models: {sig['model_votes']}/{city['total_models']} | E[P]: +${sig['expected_profit']:.2f}"
                     )
-                    trades_placed.append({
-                        **sig,
-                        "order_id": "DRY_RUN",
-                    })
+                    trades_placed.append({**sig, "order_id": "DRY_RUN"})
                     result["trades"] += 1
-                else:
-                    # LIVE — place real order
+
+                elif mode == "manual":
+                    # MANUAL — queue signal, let user approve via Telegram
+                    pending_sig = {
+                        "city": city_name,
+                        "date": date_str,
+                        "bracket": bracket,
+                        "token_id": token_id,
+                        "ask": sig["ask"],
+                        "contracts": sig["contracts"],
+                        "kelly_bet": sig["kelly_bet"],
+                        "true_edge": sig["true_edge"],
+                        "corrected_prob": sig["corrected_prob"],
+                        "model_votes": sig["model_votes"],
+                        "total_models": city["total_models"],
+                        "expected_profit": sig["expected_profit"],
+                    }
+                    add_pending(pending_sig)
+                    pid = load_pending()[-1]["pending_id"]
+
+                    log.info(
+                        f"👆 QUEUED #{pid}: {bracket} @ {sig['ask']:.3f} "
+                        f"x{sig['contracts']} = ${sig['kelly_bet']:.2f}"
+                    )
+                    await send_telegram(
+                        f"👆 <b>SIGNAL #{pid}: {city_name} {date_str}</b>\n"
+                        f"  <b>{bracket}</b> @ {sig['ask']*100:.1f}¢\n"
+                        f"  Edge: +{sig['true_edge']*100:.1f}pt | ${sig['kelly_bet']:.2f}\n"
+                        f"  Contracts: {sig['contracts']} | Models: {sig['model_votes']}/{city['total_models']}\n"
+                        f"  E[Profit]: +${sig['expected_profit']:.2f}\n\n"
+                        f"  → /buy_{pid} to execute\n"
+                        f"  → /signals to see all pending"
+                    )
+                    trades_placed.append({**sig, "order_id": f"PENDING_{pid}"})
+                    result["trades"] += 1
+
+                elif mode == "auto":
+                    # AUTO — place real order immediately
                     order_result = await place_limit_order(
                         token_id=token_id,
                         price=sig["ask"],
@@ -497,7 +682,9 @@ async def run_cycle():
 
     dry_run = is_dry_run()
     paused = is_paused()
-    mode_tag = "🧪 DRY RUN" if dry_run else "🔴 LIVE"
+    mode = get_mode()
+    mode_map = {"dryrun": "🧪 DRY RUN", "manual": "👆 MANUAL", "auto": "🔴 AUTO"}
+    mode_tag = mode_map.get(mode, "🧪 DRY RUN")
 
     log.info(f"╔══════════════════════════════════════╗")
     log.info(f"║  CYCLE #{cycle_count}  —  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  ║")
@@ -527,7 +714,7 @@ async def run_cycle():
                 await alert_error(f"Cycle error: {city['name']} {date_str} — {e}")
 
     # Check pending orders from previous cycles (skip in dry run)
-    if not dry_run:
+    if mode == "auto":
         await check_pending_orders()
 
     # Check resolutions
@@ -553,7 +740,7 @@ async def run_cycle():
 
     log.info(
         f"Cycle #{cycle_count} complete: "
-        f"{total_signals} signals, {total_trades} {'dry run signals' if dry_run else 'trades placed'}"
+        f"{total_signals} signals, {total_trades} {'queued' if mode == 'manual' else 'dry run signals' if mode == 'dryrun' else 'trades placed'}"
     )
 
 
@@ -561,12 +748,13 @@ async def main():
     """Main entry point — run cycles forever."""
     from config import POLYGON_PRIVATE_KEY, TELEGRAM_BOT_TOKEN
 
-    # Initialize control file with dry run ON
+    # Initialize control file with dryrun mode
     if not CONTROL_FILE.exists():
-        save_control({"dry_run": True, "paused": False})
+        save_control({"mode": "dryrun", "paused": False})
 
     ctrl = load_control()
-    mode = "🧪 DRY RUN" if ctrl["dry_run"] else "🔴 LIVE"
+    mode_map = {"dryrun": "🧪 DRY RUN", "manual": "👆 MANUAL", "auto": "🔴 AUTO"}
+    mode = mode_map.get(ctrl.get("mode", "dryrun"), "🧪 DRY RUN")
 
     log.info("=" * 60)
     log.info("  WEATHER TRADER BOT — STARTING")
@@ -583,14 +771,16 @@ async def main():
     await send_telegram(
         f"🚀 <b>Weather Trader Bot Started</b>\n"
         f"  Mode: {mode}\n"
+        f"  Bankroll: $9 | Kelly: ⅓\n"
         f"  Monitoring: London, Seoul, NYC, Seattle\n"
         f"  Cycle: every 30 min\n\n"
         f"  <b>Commands:</b>\n"
+        f"  /manual — approve each trade ✅\n"
+        f"  /dryrun — log only (current)\n"
+        f"  /auto — auto-trade all signals\n"
+        f"  /signals — view pending signals\n"
+        f"  /buy_1 — approve signal #1\n"
         f"  /status — check bot state\n"
-        f"  /pause — stop trading\n"
-        f"  /resume — resume trading\n"
-        f"  /dryrun — log only mode\n"
-        f"  /live — real trading mode\n"
         f"  /help — all commands"
     )
 

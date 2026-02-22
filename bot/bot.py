@@ -1,14 +1,18 @@
 """
 Weather Trader Bot — Main Loop
 Orchestrates 30-minute cycles across all cities.
+Supports DRY RUN mode and Telegram commands for remote control.
 """
 
 import asyncio
+import json
 import logging
 import sys
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import config
 from config import CITIES, CYCLE_INTERVAL_SECONDS, ORDER_TIMEOUT_SECONDS
 from ensemble import fetch_ensemble, bias_correct, map_to_brackets
 from metar import fetch_metar
@@ -25,8 +29,123 @@ from risk import (
 from alerts import (
     alert_trade, alert_resolution, alert_kill_switch, alert_heartbeat,
     alert_error, alert_order_update, alert_startup, alert_no_signals,
+    send_telegram,
 )
 from logger import log_cycle, log_resolution, log_fill_update
+
+# ══════════════════════════════════════════════════════
+# CONTROL FILE — persists bot state across restarts
+# ══════════════════════════════════════════════════════
+CONTROL_FILE = Path("control.json")
+
+
+def load_control() -> dict:
+    if CONTROL_FILE.exists():
+        try:
+            return json.loads(CONTROL_FILE.read_text())
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {"dry_run": True, "paused": False}
+
+
+def save_control(ctrl: dict):
+    CONTROL_FILE.write_text(json.dumps(ctrl, indent=2))
+
+
+def is_dry_run() -> bool:
+    return load_control().get("dry_run", True)
+
+
+def is_paused() -> bool:
+    return load_control().get("paused", False)
+
+
+def set_mode(dry_run: bool | None = None, paused: bool | None = None):
+    ctrl = load_control()
+    if dry_run is not None:
+        ctrl["dry_run"] = dry_run
+    if paused is not None:
+        ctrl["paused"] = paused
+    save_control(ctrl)
+
+
+# ══════════════════════════════════════════════════════
+# TELEGRAM COMMANDS — poll for /commands from user
+# ══════════════════════════════════════════════════════
+last_update_id = 0
+
+
+async def poll_telegram_commands():
+    """Check for Telegram commands and execute them."""
+    global last_update_id
+    import httpx
+
+    token = config.TELEGRAM_BOT_TOKEN
+    chat_id = config.TELEGRAM_CHAT_ID
+    if not token or not chat_id:
+        return
+
+    url = f"https://api.telegram.org/bot{token}/getUpdates"
+    params = {"offset": last_update_id + 1, "timeout": 0}
+
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(url, params=params)
+            data = r.json()
+
+        for update in data.get("result", []):
+            last_update_id = update["update_id"]
+            msg = update.get("message", {})
+            text = msg.get("text", "").strip().lower()
+            sender = str(msg.get("chat", {}).get("id", ""))
+
+            if sender != chat_id:
+                continue
+
+            if text == "/pause":
+                set_mode(paused=True)
+                await send_telegram("⏸ <b>BOT PAUSED</b>\nNo trades until you send /resume")
+
+            elif text == "/resume":
+                set_mode(paused=False)
+                await send_telegram("▶️ <b>BOT RESUMED</b>\nBack to scanning for signals")
+
+            elif text == "/dryrun":
+                set_mode(dry_run=True)
+                await send_telegram("🧪 <b>DRY RUN MODE</b>\nLogging signals but NOT placing real orders")
+
+            elif text == "/live":
+                set_mode(dry_run=False)
+                await send_telegram("🔴 <b>LIVE TRADING MODE</b>\n⚠️ Real orders will be placed!")
+
+            elif text == "/status":
+                ctrl = load_control()
+                portfolio = get_portfolio_summary()
+                mode = "🧪 DRY RUN" if ctrl["dry_run"] else "🔴 LIVE"
+                state = "⏸ PAUSED" if ctrl["paused"] else "▶️ RUNNING"
+                await send_telegram(
+                    f"📊 <b>STATUS</b>\n"
+                    f"  Mode: {mode}\n"
+                    f"  State: {state}\n"
+                    f"  Active positions: {portfolio['active_positions']}\n"
+                    f"  Active exposure: ${portfolio['active_exposure']:.2f}\n"
+                    f"  Total trades: {portfolio['total_trades']}\n"
+                    f"  Daily P&L: {'+'if get_daily_pnl()>=0 else ''}${get_daily_pnl():.2f}"
+                )
+
+            elif text == "/help":
+                await send_telegram(
+                    "🤖 <b>COMMANDS</b>\n"
+                    "  /pause — stop trading\n"
+                    "  /resume — resume trading\n"
+                    "  /dryrun — log only, no real orders\n"
+                    "  /live — enable real trading\n"
+                    "  /status — show current state\n"
+                    "  /help — show this message"
+                )
+
+    except Exception as e:
+        log.debug(f"Telegram poll error: {e}")
 
 # ══════════════════════════════════════════════════════
 # LOGGING SETUP
@@ -126,8 +245,9 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
 
         # 6. Check if trading allowed
         tradeable, reason = can_trade()
+        dry_run = is_dry_run()
 
-        # 7. Place orders for BUY signals
+        # 7. Place orders for BUY signals (or log in dry run)
         trades_placed = []
         if tradeable and signals:
             for sig in signals:
@@ -138,61 +258,80 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                     log.warning(f"No token ID for {bracket}, skipping")
                     continue
 
-                # Place limit order at best ask
-                order_result = await place_limit_order(
-                    token_id=token_id,
-                    price=sig["ask"],
-                    size=sig["contracts"],
-                    bracket_label=bracket,
-                )
-
-                if order_result["success"]:
-                    # Record in risk manager
-                    record_trade(
-                        city_name=city_name,
-                        date_str=date_str,
-                        bracket=bracket,
-                        signal=sig["signal"],
-                        corrected_prob=sig["corrected_prob"],
-                        ask=sig["ask"],
-                        kelly_bet=sig["kelly_bet"],
-                        contracts=sig["contracts"],
-                        edge=sig["true_edge"],
-                        model_votes=sig["model_votes"],
-                        order_id=order_result["order_id"],
+                if dry_run:
+                    # DRY RUN — log everything but don't place order
+                    log.info(
+                        f"🧪 DRY RUN: WOULD BUY {bracket} @ {sig['ask']:.3f} "
+                        f"x{sig['contracts']} = ${sig['kelly_bet']:.2f} "
+                        f"(edge +{sig['true_edge']*100:.1f}pt)"
                     )
-
-                    # Send Telegram alert
-                    await alert_trade(
-                        city=city_name,
-                        date_str=date_str,
-                        bracket=bracket,
-                        ask=sig["ask"],
-                        edge=sig["true_edge"],
-                        kelly_bet=sig["kelly_bet"],
-                        contracts=sig["contracts"],
-                        model_votes=sig["model_votes"],
-                        total_models=city["total_models"],
-                        expected_profit=sig["expected_profit"],
+                    await send_telegram(
+                        f"🧪 <b>DRY RUN SIGNAL: {city_name} {date_str}</b>\n"
+                        f"  Would buy YES <b>{bracket}</b> @ {sig['ask']*100:.1f}¢\n"
+                        f"  Edge: +{sig['true_edge']*100:.1f}pt | Kelly: ${sig['kelly_bet']:.2f}\n"
+                        f"  Contracts: {sig['contracts']} | Models: {sig['model_votes']}/{city['total_models']}\n"
+                        f"  E[Profit]: +${sig['expected_profit']:.2f}\n"
+                        f"  ⚡ Send /live to enable real trading"
                     )
-
                     trades_placed.append({
                         **sig,
-                        "order_id": order_result["order_id"],
+                        "order_id": "DRY_RUN",
                     })
                     result["trades"] += 1
-
-                    log.info(
-                        f"✅ ORDER: {bracket} @ {sig['ask']:.3f} "
-                        f"x{sig['contracts']} = ${sig['kelly_bet']:.2f}"
-                    )
                 else:
-                    log.error(
-                        f"❌ ORDER FAILED: {bracket} — {order_result['error']}"
+                    # LIVE — place real order
+                    order_result = await place_limit_order(
+                        token_id=token_id,
+                        price=sig["ask"],
+                        size=sig["contracts"],
+                        bracket_label=bracket,
                     )
-                    await alert_error(
-                        f"Order failed: {city_name} {bracket} — {order_result['error']}"
-                    )
+
+                    if order_result["success"]:
+                        record_trade(
+                            city_name=city_name,
+                            date_str=date_str,
+                            bracket=bracket,
+                            signal=sig["signal"],
+                            corrected_prob=sig["corrected_prob"],
+                            ask=sig["ask"],
+                            kelly_bet=sig["kelly_bet"],
+                            contracts=sig["contracts"],
+                            edge=sig["true_edge"],
+                            model_votes=sig["model_votes"],
+                            order_id=order_result["order_id"],
+                        )
+
+                        await alert_trade(
+                            city=city_name,
+                            date_str=date_str,
+                            bracket=bracket,
+                            ask=sig["ask"],
+                            edge=sig["true_edge"],
+                            kelly_bet=sig["kelly_bet"],
+                            contracts=sig["contracts"],
+                            model_votes=sig["model_votes"],
+                            total_models=city["total_models"],
+                            expected_profit=sig["expected_profit"],
+                        )
+
+                        trades_placed.append({
+                            **sig,
+                            "order_id": order_result["order_id"],
+                        })
+                        result["trades"] += 1
+
+                        log.info(
+                            f"✅ ORDER: {bracket} @ {sig['ask']:.3f} "
+                            f"x{sig['contracts']} = ${sig['kelly_bet']:.2f}"
+                        )
+                    else:
+                        log.error(
+                            f"❌ ORDER FAILED: {bracket} — {order_result['error']}"
+                        )
+                        await alert_error(
+                            f"Order failed: {city_name} {bracket} — {order_result['error']}"
+                        )
 
         elif not tradeable:
             log.info(f"{city_name}: Trading blocked — {reason}")
@@ -350,9 +489,22 @@ async def run_cycle():
     global cycle_count
     cycle_count += 1
 
+    # Poll Telegram commands first
+    await poll_telegram_commands()
+
+    dry_run = is_dry_run()
+    paused = is_paused()
+    mode_tag = "🧪 DRY RUN" if dry_run else "🔴 LIVE"
+
     log.info(f"╔══════════════════════════════════════╗")
     log.info(f"║  CYCLE #{cycle_count}  —  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  ║")
+    log.info(f"║  Mode: {mode_tag}  {'⏸ PAUSED' if paused else ''}  ║")
     log.info(f"╚══════════════════════════════════════╝")
+
+    # Check pause
+    if paused:
+        log.info("Bot is PAUSED — skipping cycle. Send /resume on Telegram.")
+        return
 
     # Check kill switch
     if is_kill_switch_active():
@@ -371,8 +523,9 @@ async def run_cycle():
                 log.error(f"Unhandled error in {city['name']} {date_str}: {e}")
                 await alert_error(f"Cycle error: {city['name']} {date_str} — {e}")
 
-    # Check pending orders from previous cycles
-    await check_pending_orders()
+    # Check pending orders from previous cycles (skip in dry run)
+    if not dry_run:
+        await check_pending_orders()
 
     # Check resolutions
     await check_resolutions()
@@ -397,7 +550,7 @@ async def run_cycle():
 
     log.info(
         f"Cycle #{cycle_count} complete: "
-        f"{total_signals} signals, {total_trades} trades placed"
+        f"{total_signals} signals, {total_trades} {'dry run signals' if dry_run else 'trades placed'}"
     )
 
 
@@ -405,9 +558,17 @@ async def main():
     """Main entry point — run cycles forever."""
     from config import POLYGON_PRIVATE_KEY, TELEGRAM_BOT_TOKEN
 
+    # Initialize control file with dry run ON
+    if not CONTROL_FILE.exists():
+        save_control({"dry_run": True, "paused": False})
+
+    ctrl = load_control()
+    mode = "🧪 DRY RUN" if ctrl["dry_run"] else "🔴 LIVE"
+
     log.info("=" * 60)
     log.info("  WEATHER TRADER BOT — STARTING")
     log.info("=" * 60)
+    log.info(f"  Mode: {mode}")
     log.info(f"  Bankroll: $50 | Kelly: ⅓ | Max exposure: $20")
     log.info(f"  Min edge: 5pt | Min models: 2 | Max ask: 50¢")
     log.info(f"  Kill switch: $30 daily loss")
@@ -416,7 +577,19 @@ async def main():
     log.info(f"  Telegram configured: {'YES' if TELEGRAM_BOT_TOKEN else 'NO'}")
     log.info("=" * 60)
 
-    await alert_startup()
+    await send_telegram(
+        f"🚀 <b>Weather Trader Bot Started</b>\n"
+        f"  Mode: {mode}\n"
+        f"  Monitoring: London, Seoul, NYC, Seattle\n"
+        f"  Cycle: every 30 min\n\n"
+        f"  <b>Commands:</b>\n"
+        f"  /status — check bot state\n"
+        f"  /pause — stop trading\n"
+        f"  /resume — resume trading\n"
+        f"  /dryrun — log only mode\n"
+        f"  /live — real trading mode\n"
+        f"  /help — all commands"
+    )
 
     while True:
         try:

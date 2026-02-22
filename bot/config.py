@@ -34,6 +34,12 @@ ORDER_TIMEOUT_SECONDS = 300    # Cancel unfilled limit orders after 5 min
 CYCLE_INTERVAL_SECONDS = 1800  # 30 minutes between cycles
 
 # ══════════════════════════════════════════════════════
+# BOT MODE
+# ══════════════════════════════════════════════════════
+DRY_RUN = True  # True = log everything but don't place orders. False = live trading.
+BOT_PAUSED = False  # Can be toggled via Telegram commands
+
+# ══════════════════════════════════════════════════════
 # MONTE CARLO BIAS CORRECTION
 # ══════════════════════════════════════════════════════
 MC_SAMPLES = 50000

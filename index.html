@@ -705,11 +705,11 @@ async function fetchGas(){
   try{
     const[gR,pR]=await Promise.all([
       fetch("https://gasstation.polygon.technology/v2",{signal:AbortSignal.timeout(5000)}),
-      fetch("https://api.coingecko.com/api/v3/simple/price?ids=matic-network&vs_currencies=usd",{signal:AbortSignal.timeout(5000)})
+      fetch("https://api.coingecko.com/api/v3/simple/price?ids=polygon-ecosystem-token&vs_currencies=usd",{signal:AbortSignal.timeout(5000)})
     ]);
     const g=await gR.json(),pp=await pR.json();
     const totalGwei=g.estimatedBaseFee+g.standard.maxPriorityFee;
-    polPrice=pp['matic-network']?.usd||0.35;
+    polPrice=pp['polygon-ecosystem-token']?.usd||0.35;
     gasCostUsd=200000*totalGwei/1e9*polPrice;
     log("Gas: $"+gasCostUsd.toFixed(4)+"/trade","lo");
   }catch(e){gasCostUsd=0.03;log("Gas: fallback $0.03","lw")}

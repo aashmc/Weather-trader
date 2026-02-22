@@ -13,7 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import config
-from config import CITIES, CYCLE_INTERVAL_SECONDS, ORDER_TIMEOUT_SECONDS
+from config import CITIES, CYCLE_INTERVAL_SECONDS, ORDER_TIMEOUT_SECONDS, TELEGRAM_POLL_SECONDS, DAILY_LOSS_LIMIT
 from ensemble import fetch_ensemble, bias_correct, map_to_brackets
 from metar import fetch_metar
 from market import (
@@ -418,7 +418,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
         # 4. Fetch order books
         books = await fetch_all_books(token_ids)
 
-        # 5. Run strategy analysis
+        # 5. Run v5 strategy (maturity → favorite → ±1 → filters → concentration)
         existing = get_existing_positions(city_name, date_str)
         exposure = get_daily_exposure()
 
@@ -432,11 +432,38 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
             total_models=city["total_models"],
             existing_positions=existing,
             current_exposure=exposure,
+            city_config=city,
         )
+
+        # Handle maturity failure
+        mature, maturity_reason = analysis["maturity"]
+        if not mature:
+            log.info(f"  ⏳ Market immature: {maturity_reason}")
+            result["status"] = f"immature:{maturity_reason}"
+            return result
+
+        # Handle divergence warning
+        diverged, div_dist, model_top, market_fav = analysis["divergence"]
+        if diverged:
+            await send_telegram(
+                f"⚠️ <b>DIVERGENCE: {city_name} {date_str}</b>\n"
+                f"  Model top: {model_top}\n"
+                f"  Market fav: {market_fav}\n"
+                f"  Distance: {div_dist} brackets\n"
+                f"  → Skipping (model & market disagree)"
+            )
+            result["status"] = f"divergence:{div_dist}"
+            return result
 
         signals = get_actionable_signals(analysis)
         totals = compute_totals(analysis)
         result["signals"] = totals["buy_count"]
+
+        # Log favorite and concentration
+        fav = analysis.get("favorite", "?")
+        conc = analysis.get("concentration", 0)
+        km = analysis.get("kelly_multiplier", 0)
+        log.info(f"  Fav: {fav} | Conc: {conc*100:.0f}% | Kelly×{km:.2f} | Signals: {totals['buy_count']}")
 
         # 6. Check if trading allowed
         tradeable, reason = can_trade()
@@ -459,18 +486,23 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                     log.warning(f"No token ID for {bracket}, skipping")
                     continue
 
+                fav_tag = " ⭐FAV" if sig.get("is_favorite") else ""
+                conc_tag = f"Conc {sig.get('concentration', 0)*100:.0f}%"
+                km_val = sig.get("kelly_multiplier", 0)
+
                 if mode == "dryrun":
                     # DRY RUN — log everything but don't place order
                     log.info(
-                        f"🧪 DRY RUN: WOULD BUY {bracket} @ {sig['ask']:.3f} "
+                        f"🧪 DRY RUN: WOULD BUY {bracket}{fav_tag} @ {sig['ask']:.3f} "
                         f"x{sig['contracts']} = ${sig['kelly_bet']:.2f} "
                         f"(edge +{sig['true_edge']*100:.1f}pt)"
                     )
                     await send_telegram(
                         f"🧪 <b>DRY RUN: {city_name} {date_str}</b>\n"
-                        f"  <b>{bracket}</b> @ {sig['ask']*100:.1f}¢\n"
+                        f"  <b>{bracket}</b>{fav_tag} @ {sig['ask']*100:.1f}¢\n"
                         f"  Edge: +{sig['true_edge']*100:.1f}pt | ${sig['kelly_bet']:.2f}\n"
-                        f"  Models: {sig['model_votes']}/{city['total_models']} | E[P]: +${sig['expected_profit']:.2f}"
+                        f"  Models: {sig['model_votes']}/{city['total_models']} | {conc_tag}\n"
+                        f"  Kelly×{km_val:.2f} | E[P]: +${sig['expected_profit']:.2f}"
                     )
                     trades_placed.append({**sig, "order_id": "DRY_RUN"})
                     result["trades"] += 1
@@ -490,20 +522,23 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                         "model_votes": sig["model_votes"],
                         "total_models": city["total_models"],
                         "expected_profit": sig["expected_profit"],
+                        "concentration": sig.get("concentration", 0),
+                        "kelly_multiplier": sig.get("kelly_multiplier", 0),
+                        "is_favorite": sig.get("is_favorite", False),
                     }
                     add_pending(pending_sig)
                     pid = load_pending()[-1]["pending_id"]
 
                     log.info(
-                        f"👆 QUEUED #{pid}: {bracket} @ {sig['ask']:.3f} "
+                        f"👆 QUEUED #{pid}: {bracket}{fav_tag} @ {sig['ask']:.3f} "
                         f"x{sig['contracts']} = ${sig['kelly_bet']:.2f}"
                     )
                     await send_telegram(
                         f"👆 <b>SIGNAL #{pid}: {city_name} {date_str}</b>\n"
-                        f"  <b>{bracket}</b> @ {sig['ask']*100:.1f}¢\n"
+                        f"  <b>{bracket}</b>{fav_tag} @ {sig['ask']*100:.1f}¢\n"
                         f"  Edge: +{sig['true_edge']*100:.1f}pt | ${sig['kelly_bet']:.2f}\n"
-                        f"  Contracts: {sig['contracts']} | Models: {sig['model_votes']}/{city['total_models']}\n"
-                        f"  E[Profit]: +${sig['expected_profit']:.2f}",
+                        f"  Models: {sig['model_votes']}/{city['total_models']} | {conc_tag}\n"
+                        f"  Kelly×{km_val:.2f} | E[P]: +${sig['expected_profit']:.2f}",
                         buttons=[[
                             {"text": "✅ Approve", "callback_data": f"buy_{pid}"},
                             {"text": "⏭ Skip", "callback_data": f"skip_{pid}"},
@@ -570,14 +605,17 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
         elif not tradeable:
             log.info(f"{city_name}: Trading blocked — {reason}")
         elif not signals:
-            # Log best edge even if no signal
-            best = analysis[0] if analysis else None
-            if best:
+            # Log best candidate edge even if no signal passed
+            all_sigs = analysis.get("signals", [])
+            if all_sigs:
+                best = all_sigs[0]
+                reasons = ", ".join(best.get("filter_reasons", []))
                 log.info(
-                    f"{city_name}: No signals. Best edge: "
-                    f"{best['bracket']} {best['true_edge'] * 100:.1f}pt "
-                    f"(need ≥5pt)"
+                    f"{city_name}: No signals passed. Best: "
+                    f"{best['bracket']} edge={best['true_edge']*100:.1f}pt [{reasons}]"
                 )
+            else:
+                log.info(f"{city_name}: No candidates after favorite ±1 filter")
 
         # 8. Log cycle — comprehensive data for recalibration
         await log_cycle(
@@ -588,7 +626,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
             metar_high=metar["day_high_market"],
             metar_current=metar["current_temp_c"],
             metar_obs_count=metar["observation_count"],
-            brackets_data=analysis,
+            brackets_data=analysis.get("signals", []),
             signals=signals,
             trades_placed=trades_placed,
             raw_dist=ensemble["raw_dist"],
@@ -807,7 +845,8 @@ async def main():
     log.info("=" * 60)
     log.info(f"  Mode: {mode}")
     log.info(f"  Bankroll: $9 | Kelly: ⅓ | Max exposure: $3.60")
-    log.info(f"  Min edge: 5pt | Min models: 2 | Max ask: 50¢")
+    log.info(f"  Strategy: v5 (favorite ±1, per-city filters, concentration)")
+    log.info(f"  Max ask: 50¢ | Telegram poll: {TELEGRAM_POLL_SECONDS}s")
     log.info(f"  Kill switch: $5.40 daily loss")
     log.info(f"  Cycle interval: {CYCLE_INTERVAL_SECONDS}s")
     log.info(f"  Wallet configured: {'YES' if POLYGON_PRIVATE_KEY else 'NO'}")
@@ -815,11 +854,12 @@ async def main():
     log.info("=" * 60)
 
     await send_telegram(
-        f"🚀 <b>Weather Trader Bot Started</b>\n"
+        f"🚀 <b>Weather Trader Bot v5 Started</b>\n"
         f"  Mode: {mode}\n"
-        f"  Bankroll: $9 | Kelly: ⅓\n"
+        f"  Strategy: favorite ±1, concentration Kelly\n"
+        f"  Bankroll: $9 | Kelly: ⅓ × conc\n"
         f"  Monitoring: London, Seoul, NYC, Seattle\n"
-        f"  Cycle: every 30 min\n\n"
+        f"  Cycle: every 30 min | Poll: every 60s\n\n"
         f"  <b>Commands:</b>\n"
         f"  /manual — approve each trade ✅\n"
         f"  /dryrun — log only (current)\n"
@@ -837,8 +877,13 @@ async def main():
             log.error(f"Critical cycle error: {e}", exc_info=True)
             await alert_error(f"Critical: {e}")
 
-        log.info(f"Next cycle in {CYCLE_INTERVAL_SECONDS}s...")
-        await asyncio.sleep(CYCLE_INTERVAL_SECONDS)
+        # Fast polling between cycles — check Telegram every 60s
+        log.info(f"Next cycle in {CYCLE_INTERVAL_SECONDS}s (polling Telegram every {TELEGRAM_POLL_SECONDS}s)...")
+        elapsed = 0
+        while elapsed < CYCLE_INTERVAL_SECONDS:
+            await asyncio.sleep(TELEGRAM_POLL_SECONDS)
+            elapsed += TELEGRAM_POLL_SECONDS
+            await poll_telegram_commands()
 
 
 if __name__ == "__main__":

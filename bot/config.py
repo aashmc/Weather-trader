@@ -20,24 +20,47 @@ GOOGLE_SHEET_WEBHOOK = os.getenv("GOOGLE_SHEET_WEBHOOK", "")
 # TRADING PARAMETERS
 # ══════════════════════════════════════════════════════
 BANKROLL = 9.0
-KELLY_FRACTION = 0.33          # ⅓ Kelly
+KELLY_FRACTION = 0.33          # ⅓ Kelly (before concentration scaling)
+KELLY_CAP = 0.75               # Max Kelly multiplier after concentration scaling
 MAX_BET_PER_BRACKET = 0.90     # 10% of bankroll
 MAX_TOTAL_EXPOSURE = 3.60      # 40% of bankroll
 DAILY_LOSS_LIMIT = 5.40        # 60% of bankroll — kill switch
 
-MIN_TRUE_EDGE = 0.05           # 5pt minimum edge
-MIN_MODEL_AGREEMENT = 2        # 2+ models must agree
+# Global filters (applied to all cities)
 MIN_ASK_DEPTH = 20             # 20 contracts minimum on ask side
 MAX_ASK_PRICE = 0.50           # Don't buy >50¢
 ORDER_TIMEOUT_SECONDS = 300    # Cancel unfilled limit orders after 5 min
 
-CYCLE_INTERVAL_SECONDS = 1800  # 30 minutes between cycles
+CYCLE_INTERVAL_SECONDS = 1800  # 30 minutes between main cycles
+TELEGRAM_POLL_SECONDS = 60     # Fast polling for button presses
+
+# ══════════════════════════════════════════════════════
+# MARKET MATURITY THRESHOLDS
+# ══════════════════════════════════════════════════════
+MATURITY_MIN_FAV_PRICE = 0.25  # At least one bracket must be ≥25¢
+MATURITY_MAX_FAV_SPREAD = 0.03 # Favorite spread must be ≤3¢
+MATURITY_MIN_LIQUID_BRACKETS = 3  # At least 3 brackets with depth ≥10
+
+# ══════════════════════════════════════════════════════
+# CONCENTRATION-BASED KELLY SCALING
+# ══════════════════════════════════════════════════════
+CONCENTRATION_MIN = 0.50       # <50% = no trade
+CONCENTRATION_TIERS = [
+    (0.70, 0.75),  # ≥70% → 0.75x Kelly
+    (0.60, 0.60),  # 60-69% → 0.60x Kelly
+    (0.50, 0.50),  # 50-59% → 0.50x Kelly
+]
+
+# ══════════════════════════════════════════════════════
+# MODEL VS MARKET DIVERGENCE
+# ══════════════════════════════════════════════════════
+MAX_DIVERGENCE_BRACKETS = 2    # If model top and market fav 3+ apart → warn & skip
 
 # ══════════════════════════════════════════════════════
 # BOT MODE
 # ══════════════════════════════════════════════════════
-DRY_RUN = True  # True = log everything but don't place orders. False = live trading.
-BOT_PAUSED = False  # Can be toggled via Telegram commands
+DRY_RUN = True
+BOT_PAUSED = False
 
 # ══════════════════════════════════════════════════════
 # MONTE CARLO BIAS CORRECTION
@@ -68,6 +91,8 @@ CITIES = {
         "bias_mean": 0.17,
         "bias_sd": 0.66,
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
+        "min_models": 3,    # 3/5 models must agree
+        "min_edge": 0.05,   # 5pt minimum edge
     },
     "seoul": {
         "name": "Seoul",
@@ -86,6 +111,8 @@ CITIES = {
         "bias_mean": 0.69,
         "bias_sd": 0.86,
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
+        "min_models": 3,    # 3/4 models must agree
+        "min_edge": 0.05,
     },
     "nyc": {
         "name": "NYC",
@@ -103,6 +130,8 @@ CITIES = {
         "bias_mean": 1.79,
         "bias_sd": 2.49,
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
+        "min_models": 2,    # 2/2 — both must agree
+        "min_edge": 0.08,   # 8pt higher threshold
     },
     "seattle": {
         "name": "Seattle",
@@ -121,10 +150,12 @@ CITIES = {
         "bias_mean": 1.66,
         "bias_sd": 1.93,
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
+        "min_models": 2,    # 2/3 models must agree
+        "min_edge": 0.05,
     },
 }
 
-# Total model count per city (for model agreement denominator)
+# Total model count per city
 for city_cfg in CITIES.values():
     city_cfg["total_models"] = len(city_cfg["ensemble_models"]) + (
         1 if city_cfg["synthetic_model"] else 0
@@ -141,6 +172,5 @@ CLOB_API = "https://clob.polymarket.com"
 POLYGON_GAS_API = "https://gasstation.polygon.technology/v2"
 COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price"
 
-# Polymarket CLOB
 POLYMARKET_HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137  # Polygon mainnet

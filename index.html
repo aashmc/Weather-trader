@@ -70,6 +70,25 @@ td:first-child{text-align:left;font-weight:500;color:var(--tx)}
 .pnl-big-sub{font-size:8px;color:var(--dm2);margin-top:3px}
 .pos-w{background:rgba(22,163,74,.02)}.pos-l{opacity:.35}
 @media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.sidebar{display:none}.main{padding:12px}}
+.cfg-grid{display:flex;flex-direction:column;gap:0}
+.cfg-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--bd);gap:12px}
+.cfg-row:last-child{border-bottom:none}
+.cfg-l{display:flex;flex-direction:column;gap:1px;flex:1}
+.cfg-name{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:var(--tx)}
+.cfg-desc{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm2);line-height:1.3}
+.cfg-val{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500}
+.cfg-input{font-family:'IBM Plex Mono',monospace;font-size:10px;padding:3px 8px;border:1px solid var(--bd);border-radius:3px;background:var(--sf);color:var(--tx);text-align:right;width:90px}
+.cfg-input:focus{outline:none;border-color:var(--dm2)}
+.cfg-city{padding:10px 0;border-bottom:1px solid var(--bd)}
+.cfg-city:last-child{border-bottom:none}
+.cfg-city-hdr{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.cfg-city-flag{font-size:14px}
+.cfg-city-name{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600}
+.cfg-city-meta{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm2)}
+.cfg-city-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 16px;margin-left:22px}
+.cfg-city-item{display:flex;justify-content:space-between;align-items:center;font-family:'IBM Plex Mono',monospace;font-size:9px;padding:2px 0}
+.cfg-city-item span:first-child{color:var(--dm)}
+.cfg-city-item span:last-child{color:var(--tx);font-weight:500}
 .dtabs{display:flex;gap:3px;margin-bottom:12px;overflow-x:auto;padding-bottom:2px}
 .dtab{padding:5px 12px;border-radius:4px;border:1px solid var(--bd);background:transparent;color:var(--dm);cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:500;white-space:nowrap;transition:all .15s}
 .dtab:hover{color:var(--tx)}
@@ -85,9 +104,15 @@ td:first-child{text-align:left;font-weight:500;color:var(--tx)}
 <div class="sidebar">
 <div class="sb-title">Markets</div>
 <div id="cityNav"></div>
+<div style="border-top:1px solid var(--bd);margin-top:10px;padding-top:10px">
+<div class="sb-title">System</div>
+<div class="sb-item" id="navConfig" onclick="showPage('config')">
+<span class="sb-flag">⚙</span><div><div>Config</div><div class="sb-meta">Bot Parameters</div></div>
+</div>
+</div>
 </div>
 
-<div class="main">
+<div class="main" id="tradingPage">
 <div class="hdr">
 <div><h1>Weather Trader</h1><h2 id="hdrTitle">Loading... <span></span></h2></div>
 <div class="hr"><div class="lb" id="badge">Starting...</div><br><span id="stationInfo">—</span><br><span id="ut">—</span></div>
@@ -158,6 +183,56 @@ td:first-child{text-align:left;font-weight:500;color:var(--tx)}
 
 <div class="pn"><div class="pt">Log</div><div id="log"></div></div>
 <div class="ft" id="footer">—</div>
+</div>
+
+<!-- CONFIG PAGE -->
+<div class="main" id="configPage" style="display:none">
+<div class="hdr">
+<div><h1>Weather Trader</h1><h2>Bot Configuration</h2></div>
+<div class="hr"><button onclick="exportConfig()" style="padding:5px 14px;border-radius:4px;border:1px solid var(--gn);background:rgba(22,163,74,.06);color:var(--gn);cursor:pointer;font-size:10px;font-weight:600;font-family:'IBM Plex Mono',monospace;letter-spacing:.5px">EXPORT JSON</button></div>
+</div>
+
+<div class="pn">
+<div class="pt">Trading Parameters</div>
+<div class="cfg-grid" id="cfgTrading"></div>
+</div>
+
+<div class="pn">
+<div class="pt">Risk Management</div>
+<div class="cfg-grid" id="cfgRisk"></div>
+</div>
+
+<div class="pn">
+<div class="pt">Signal Filters</div>
+<div class="cfg-grid" id="cfgFilters"></div>
+</div>
+
+<div class="pn">
+<div class="pt">Execution</div>
+<div class="cfg-grid" id="cfgExecution"></div>
+</div>
+
+<div class="pn">
+<div class="pt">City Configurations</div>
+<div id="cfgCities"></div>
+</div>
+
+<div class="pn">
+<div class="pt">Data Logging (Recalibration)</div>
+<div class="cfg-grid" id="cfgLogging"></div>
+</div>
+
+<div class="pn">
+<div class="pt">Infrastructure</div>
+<div class="cfg-grid" id="cfgInfra"></div>
+</div>
+
+<div class="pn">
+<div class="pt">Exported Config JSON</div>
+<pre id="cfgJson" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm);background:var(--sf);padding:12px;border-radius:4px;max-height:300px;overflow-y:auto;white-space:pre-wrap;display:none"></pre>
+</div>
+
+<div class="ft">Config changes here update the dashboard only. To update the bot, export JSON and upload to your VPS.</div>
 </div>
 
 <script>
@@ -1021,10 +1096,182 @@ async function refresh(){
   render();ptRender();cd=RS;
 }
 
+// ══════════════════════════════════════════════════════════
+// CONFIG PAGE
+// ══════════════════════════════════════════════════════════
+let currentPage="trading"; // "trading" or "config"
+const mainTradingPage=$("tradingPage");
+const configPage=$("configPage");
+
+function showPage(page){
+  currentPage=page;
+  if(page==="config"){
+    mainTradingPage.style.display="none";
+    configPage.style.display="block";
+    $("navConfig").classList.add("active");
+    document.querySelectorAll(".sb-item").forEach(el=>{if(el.id!=="navConfig")el.classList.remove("active")});
+    renderConfig();
+  }else{
+    mainTradingPage.style.display="block";
+    configPage.style.display="none";
+    $("navConfig").classList.remove("active");
+    renderCityNav();
+  }
+}
+
+// Bot config object — single source of truth
+const BOT_CONFIG={
+  // Trading
+  bankroll:50,kellyFraction:0.33,
+  // Risk
+  maxBetPerBracket:5,maxTotalExposure:20,dailyLossLimit:30,
+  // Filters
+  minTrueEdge:0.05,minModelAgreement:2,minAskDepth:20,maxAskPrice:0.50,
+  // Execution
+  orderType:"limit",orderTimeoutSec:300,reentry:"one_per_bracket",
+  autoRedeem:false,tradeWindow:"24/7",
+  // Logging
+  cycleIntervalSec:1800,logToSheets:true,logLocal:true,heartbeatEvery:6,
+  // Infrastructure
+  host:"hetzner",plan:"CX22"
+};
+
+function cfgField(id,label,desc,value,unit,editable=true){
+  const editHtml=editable
+    ?`<input class="cfg-input" id="cfg_${id}" type="${typeof value==='number'?'number':'text'}" value="${value}" onchange="updateConfig('${id}',this.value)" step="any">`
+    :`<span class="cfg-val" style="color:var(--tx)">${value}</span>`;
+  return`<div class="cfg-row"><div class="cfg-l"><div class="cfg-name">${label}</div><div class="cfg-desc">${desc}</div></div><div style="display:flex;align-items:center;gap:4px">${editHtml}<span style="font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm2)">${unit||""}</span></div></div>`;
+}
+
+function updateConfig(id,val){
+  const num=parseFloat(val);
+  BOT_CONFIG[id]=isNaN(num)?val:num;
+}
+
+function renderConfig(){
+  // Trading
+  $("cfgTrading").innerHTML=
+    cfgField("bankroll","Bankroll","Starting capital for position sizing",BOT_CONFIG.bankroll,"USD")+
+    cfgField("kellyFraction","Kelly Fraction","Fraction of full Kelly criterion (0.33 = ⅓ Kelly)",BOT_CONFIG.kellyFraction,"");
+
+  // Risk
+  $("cfgRisk").innerHTML=
+    cfgField("maxBetPerBracket","Max Bet / Bracket","Maximum wager on any single bracket",BOT_CONFIG.maxBetPerBracket,"USD")+
+    cfgField("maxTotalExposure","Max Total Exposure","Maximum total $ across all active positions",BOT_CONFIG.maxTotalExposure,"USD")+
+    cfgField("dailyLossLimit","Daily Loss Limit","Kill switch — stop trading if daily losses exceed this",BOT_CONFIG.dailyLossLimit,"USD");
+
+  // Filters
+  $("cfgFilters").innerHTML=
+    cfgField("minTrueEdge","Min True Edge","Minimum corrected_prob − best_ask to trigger BUY",BOT_CONFIG.minTrueEdge,"")+
+    cfgField("minModelAgreement","Min Model Agreement","Minimum distinct weather models predicting same bracket",BOT_CONFIG.minModelAgreement,"models")+
+    cfgField("minAskDepth","Min Ask Depth","Minimum contracts available on ask side",BOT_CONFIG.minAskDepth,"contracts")+
+    cfgField("maxAskPrice","Max Ask Price","Don't buy shares priced above this (limits downside)",BOT_CONFIG.maxAskPrice,"");
+
+  // Execution
+  $("cfgExecution").innerHTML=
+    cfgField("orderType","Order Type","limit = place at best ask, cancel if unfilled",BOT_CONFIG.orderType,"",false)+
+    cfgField("orderTimeoutSec","Order Timeout","Cancel unfilled limit orders after this duration",BOT_CONFIG.orderTimeoutSec,"sec")+
+    cfgField("reentry","Re-entry Rule","one_per_bracket = no adding to existing positions",BOT_CONFIG.reentry,"",false)+
+    cfgField("autoRedeem","Auto-Redeem","false = manual redemption, bot notifies via Telegram",BOT_CONFIG.autoRedeem?"yes":"no","",false)+
+    cfgField("tradeWindow","Trade Window","When the bot is allowed to place orders","24/7","",false);
+
+  // Logging
+  $("cfgLogging").innerHTML=
+    cfgField("cycleIntervalSec","Cycle Interval","How often the bot runs a full analysis cycle",BOT_CONFIG.cycleIntervalSec,"sec")+
+    cfgField("heartbeatEvery","Heartbeat Every N Cycles","Telegram alive-check frequency",BOT_CONFIG.heartbeatEvery,"cycles")+
+    `<div class="cfg-row"><div class="cfg-l"><div class="cfg-name">Data Captured Per Cycle</div><div class="cfg-desc">For recalibration — logged to Google Sheets + local JSONL</div></div></div>
+    <div style="padding:6px 0;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm);line-height:2">
+    ✓ Timestamp (UTC) · ✓ City + Market Date · ✓ Ensemble mean + member count<br>
+    ✓ Per-model member max temps · ✓ Model agreement per degree · ✓ Raw prob distribution<br>
+    ✓ Bias-corrected prob distribution · ✓ METAR current temp + day high + obs count<br>
+    ✓ Market prices per bracket · ✓ Order book bid/ask/spread/depth per bracket<br>
+    ✓ True edge + raw edge per bracket · ✓ Kelly bet sizing per bracket<br>
+    ✓ Signal (BUY/PASS/FILTERED) + filter reasons · ✓ Order ID + fill status + fill price<br>
+    ✓ Resolution winner + actual temperature · ✓ P&L per position + cumulative<br>
+    ✓ Gas cost estimate · ✓ POL/MATIC price at time of trade
+    </div>`;
+
+  // Infrastructure
+  $("cfgInfra").innerHTML=
+    cfgField("host","VPS Provider","Server hosting the bot 24/7",BOT_CONFIG.host,"",false)+
+    cfgField("plan","VPS Plan","2 vCPU, 4GB RAM, 40GB SSD",BOT_CONFIG.plan,"",false)+
+    `<div class="cfg-row"><div class="cfg-l"><div class="cfg-name">Endpoints</div><div class="cfg-desc">APIs the bot connects to</div></div></div>
+    <div style="padding:4px 0;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm);line-height:2">
+    Ensemble: ensemble-api.open-meteo.com<br>
+    Forecast: api.open-meteo.com (KMA synthetic)<br>
+    METAR: aviationweather.gov<br>
+    Polymarket: gamma-api.polymarket.com + clob.polymarket.com<br>
+    Gas: gasstation.polygon.technology<br>
+    POL Price: api.coingecko.com (polygon-ecosystem-token)<br>
+    Alerts: api.telegram.org<br>
+    Logging: Google Sheets via Apps Script webhook
+    </div>`;
+
+  // Cities
+  let ch="";
+  for(const[key,c] of Object.entries(CITIES)){
+    const models=c.ensembleModels.split(",").map(m=>m.replace("_ensemble","").replace("_eps","").replace("_seamless","").replace("_global","").replace("025","")).join(", ");
+    ch+=`<div class="cfg-city">
+      <div class="cfg-city-hdr"><span class="cfg-city-flag">${c.flag}</span><span class="cfg-city-name">${c.name}</span><span class="cfg-city-meta">${c.icao} · ${c.lat.toFixed(3)}°, ${c.lon.toFixed(3)}° · °${c.unit} · ${c.tz}</span></div>
+      <div class="cfg-city-grid">
+        <div class="cfg-city-item"><span>Station</span><span>${c.stationName}</span></div>
+        <div class="cfg-city-item"><span>Bias Mean</span><span>+${c.bias.mean}${c.unit==="F"?"°F":"°C"}</span></div>
+        <div class="cfg-city-item"><span>Bias SD</span><span>${c.bias.sd}</span></div>
+        <div class="cfg-city-item"><span>Ensemble</span><span>${models}</span></div>
+        <div class="cfg-city-item"><span>Synthetic</span><span>${c.syntheticModel||"none"}</span></div>
+        <div class="cfg-city-item"><span>Resolution</span><span><a href="${c.wunderground}" target="_blank" style="color:var(--h1);font-size:8px">Wunderground ${c.icao}</a></span></div>
+        <div class="cfg-city-item"><span>Calibration</span><span>${c.bias.note}</span></div>
+        <div class="cfg-city-item"><span>Poly Slug</span><span>${c.polyCity}</span></div>
+        <div class="cfg-city-item"><span>Total Models</span><span>${c.ensembleModels.split(",").length+(c.syntheticModel?1:0)}</span></div>
+      </div>
+    </div>`;
+  }
+  $("cfgCities").innerHTML=ch;
+}
+
+function exportConfig(){
+  const cfg={
+    version:"v3.1",
+    exported:new Date().toISOString(),
+    trading:{bankroll:BOT_CONFIG.bankroll,kelly_fraction:BOT_CONFIG.kellyFraction},
+    risk:{max_bet_per_bracket:BOT_CONFIG.maxBetPerBracket,max_total_exposure:BOT_CONFIG.maxTotalExposure,daily_loss_limit:BOT_CONFIG.dailyLossLimit},
+    filters:{min_true_edge:BOT_CONFIG.minTrueEdge,min_model_agreement:BOT_CONFIG.minModelAgreement,min_ask_depth:BOT_CONFIG.minAskDepth,max_ask_price:BOT_CONFIG.maxAskPrice},
+    execution:{order_type:BOT_CONFIG.orderType,order_timeout_sec:BOT_CONFIG.orderTimeoutSec,reentry:BOT_CONFIG.reentry,auto_redeem:BOT_CONFIG.autoRedeem,trade_window:BOT_CONFIG.tradeWindow},
+    logging:{cycle_interval_sec:BOT_CONFIG.cycleIntervalSec,heartbeat_every:BOT_CONFIG.heartbeatEvery},
+    cities:{}
+  };
+  for(const[key,c] of Object.entries(CITIES)){
+    cfg.cities[key]={
+      name:c.name,icao:c.icao,lat:c.lat,lon:c.lon,unit:c.unit,tz:c.tz,
+      poly_city:c.polyCity,
+      ensemble_models:c.ensembleModels.split(","),
+      synthetic_model:c.syntheticModel,
+      bias_mean:c.bias.mean,bias_sd:c.bias.sd,bias_note:c.bias.note
+    };
+  }
+  const jsonStr=JSON.stringify(cfg,null,2);
+  $("cfgJson").textContent=jsonStr;
+  $("cfgJson").style.display="block";
+  // Copy to clipboard
+  navigator.clipboard.writeText(jsonStr).then(()=>{
+    log("Config JSON copied to clipboard","lo");
+  }).catch(()=>{});
+  // Also trigger download
+  const blob=new Blob([jsonStr],{type:"application/json"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="weather_trader_config_"+new Date().toISOString().split("T")[0]+".json";
+  a.click();
+}
+
+// Override city nav click to switch back to trading page
+const _origSelectCity=selectCity;
+selectCity=function(key){showPage("trading");_origSelectCity(key)};
+
 // INIT
 renderCityNav();
 selectCity("london"); // default
-setInterval(()=>{cd--;$("badge").textContent="Auto-refresh "+cd+"s";if(cd<=0)refresh()},1000);
+setInterval(()=>{if(currentPage==="trading"){cd--;$("badge").textContent="Auto-refresh "+cd+"s";if(cd<=0)refresh()}},1000);
 </script>
 </body>
 </html>

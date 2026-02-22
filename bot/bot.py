@@ -166,13 +166,16 @@ cycle_count = 0
 
 def get_market_dates() -> list[str]:
     """
-    Get dates to trade: today and tomorrow.
+    Get dates to trade: today, tomorrow, and day after tomorrow.
+    Polymarket weather markets open 2-3 days ahead.
     Uses UTC date as reference.
     """
     now = datetime.now(timezone.utc)
-    today = now.strftime("%Y-%m-%d")
-    tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
-    return [today, tomorrow]
+    dates = []
+    for i in range(3):  # today, tomorrow, day after
+        d = (now + timedelta(days=i)).strftime("%Y-%m-%d")
+        dates.append(d)
+    return dates
 
 
 async def process_city(city_key: str, city: dict, date_str: str) -> dict:

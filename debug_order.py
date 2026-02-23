@@ -30,8 +30,10 @@ except:
 print("\n--- 2. Environment variables ---")
 private_key = os.getenv("POLYGON_PRIVATE_KEY", "")
 proxy_wallet = os.getenv("PROXY_WALLET", "")
+signature_type = int(os.getenv("POLY_SIGNATURE_TYPE", "2" if proxy_wallet else "0"))
 print(f"  POLYGON_PRIVATE_KEY: {'set (' + str(len(private_key)) + ' chars)' if private_key else 'MISSING'}")
 print(f"  PROXY_WALLET: {proxy_wallet if proxy_wallet else 'MISSING'}")
+print(f"  POLY_SIGNATURE_TYPE: {signature_type}")
 
 if not private_key or not proxy_wallet:
     print("\n  ERROR: Missing env vars. Cannot continue.")
@@ -54,7 +56,7 @@ client = ClobClient(
     "https://clob.polymarket.com",
     key=private_key,
     chain_id=137,
-    signature_type=1,
+    signature_type=signature_type,
     funder=proxy_wallet,
 )
 

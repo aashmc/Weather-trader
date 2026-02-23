@@ -294,21 +294,22 @@ async def place_limit_order(
         return {"order_id": None, "success": False, "error": "No CLOB client"}
 
     try:
-        from py_clob_client.client import ClobClient
         from py_clob_client.order_builder.constants import BUY
+        from py_clob_client.clob_types import OrderArgs, PartialCreateOrderOptions
 
-        # Determine tick size (most weather markets use 0.01)
-        tick_size = "0.01"
-
-        order = client.create_and_post_order(
-            {
-                "tokenID": token_id,
-                "price": price,
-                "size": size,
-                "side": BUY,
-            },
-            {"tickSize": tick_size, "negRisk": False},
+        order_args = OrderArgs(
+            token_id=token_id,
+            price=price,
+            size=size,
+            side=BUY,
         )
+
+        options = PartialCreateOrderOptions(
+            tick_size="0.01",
+            neg_risk=False,
+        )
+
+        order = client.create_and_post_order(order_args, options)
 
         order_id = order.get("orderID") or order.get("id") or str(order)
         log.info(f"Order placed: {bracket_label} @ {price:.3f} x{size:.0f} → {order_id}")

@@ -303,6 +303,16 @@ let prices={},books={},rawProbs={},corrProbs={},ensMean=0,ensCount=0;
 let gasCostUsd=0.03,polPrice=0.35,metarTemp=null,metarHigh=null,metarDayMax=null;
 let cd=RS,pxi=0;
 let ptResolved=false,ptWinner=null;
+const EXEC_CONFIG={
+  enabled:true,
+  feeRate:0.0,             // weather markets are usually fee-free
+  gasUsdPerOrder:0.0,      // keep 0 to match bot defaults
+  useLiveGasEstimate:false, // optional: use gasCostUsd estimate
+  spreadRef:0.04,          // 4c spread reference
+  queuePenalty:0.50,
+  minFill:0.05,
+  maxFill:0.98
+};
 
 const $=id=>document.getElementById(id);
 function log(m,c=""){const el=$("log"),t=new Date().toLocaleTimeString();el.innerHTML=`<div class="${c}">[${t}] ${m}</div>`+el.innerHTML;while(el.children.length>40)el.removeChild(el.lastChild)}
@@ -316,6 +326,42 @@ function cToF(c){return c*9/5+32}
 function fToC(f){return(f-32)*5/9}
 function ensToMarket(tempC){return CITY.unit==="F"?cToF(tempC):tempC}
 function unitLabel(){return"°"+CITY.unit}
+function clip(x,lo,hi){return Math.max(lo,Math.min(hi,x))}
+
+function topAskDepth(book,ask){
+  if(!book||!book.asks)return 0;
+  let d=0;
+  for(const lvl of book.asks){
+    const px=parseFloat(lvl.price||0),sz=parseFloat(lvl.size||0);
+    if(Math.abs(px-ask)<=1e-9)d+=Math.max(0,sz);
+    else if(px>ask)break;
+  }
+  return d;
+}
+
+function estimateExecution(book,ask,contracts){
+  if(!book||contracts<=0){
+    return{
+      topAskDepth:0,immediateFillFraction:1,continuationFillProb:1,fillFraction:1,slippagePenalty:0
+    };
+  }
+  const spread=Math.max(0,book.spd||0),askDepth=Math.max(0,book.askD||0),topDepth=topAskDepth(book,ask);
+  const immediate=clip(topDepth/Math.max(1,contracts),0,1);
+  const spreadRef=Math.max(0.0001,EXEC_CONFIG.spreadRef);
+  const spreadScore=clip(1-(spread/spreadRef),0,1);
+  const depthScore=clip(askDepth/Math.max(1,contracts),0,1);
+  const qPenalty=clip((spread/spreadRef)*EXEC_CONFIG.queuePenalty,0,0.8);
+  const continuation=clip(0.10+0.55*spreadScore+0.35*depthScore-qPenalty,EXEC_CONFIG.minFill,EXEC_CONFIG.maxFill);
+  const fill=immediate+(1-immediate)*continuation;
+  const slip=spread*(1-immediate)*0.50;
+  return{
+    topAskDepth:topDepth,
+    immediateFillFraction:immediate,
+    continuationFillProb:continuation,
+    fillFraction:clip(fill,EXEC_CONFIG.minFill,1),
+    slippagePenalty:Math.max(0,slip),
+  };
+}
 
 // ══════════════════════════════════════════════════════════
 // DYNAMIC BRACKET PARSING
@@ -801,24 +847,67 @@ function render(){
   const A=B.map(b=>{
     const rawP=rawProbs[b]||0,corP=(useRaw?rawP:corrProbs[b])||0,bk=books[b],mkt=prices[b]||0;
     const ask=bk?bk.ba:mkt,bid=bk?bk.bb:0,mid=bk?bk.mid:mkt;
-    const rawEdge=corP-mid,trueEdge=corP-ask;
+    const rawEdge=corP-mid;
+    const baseTrueEdge=corP-ask;
     const pb=parseBracket(b);
     const deg=pb?(pb.val??pb.low??pb.high??0):0;
     const modelVotes=ma[deg]||0;
     // Check neighboring degrees for range brackets
     let mv=modelVotes;
     if(pb&&pb.type==="range"){for(let d=pb.low;d<=pb.high;d++)mv=Math.max(mv,ma[d]||0)}
-    let bet=0,ev=0,sig="PASS",fFull=0;
+    let bet=0,ev=0,sig="PASS",fFull=0,contracts=0;
+    let fillFraction=1,immediateFillFraction=1,continuationFillProb=1;
+    let feePerContract=0,gasPerContract=0,slippagePenalty=0;
+    let effectiveAsk=ask,edgeAfterCosts=baseTrueEdge,trueEdge=baseTrueEdge;
     if(ask>0&&ask<1&&corP>0){
-      const bo=(1-ask)/ask,q=1-corP;
-      fFull=(bo*corP-q)/bo;
-      const fK=Math.max(0,fFull*KELLY_FRAC);
-      bet=Math.round(fK*BR*100)/100;
-      ev=bet>0?Math.round(bet*(corP/ask-1)*100)/100:0;
+      // Pass 1: rough size for execution estimate
+      const bo0=(1-ask)/ask,q0=1-corP;
+      const f0=Math.max(0,(bo0*corP-q0)/bo0);
+      const bet0=Math.round(f0*KELLY_FRAC*BR*100)/100;
+      const hint=Math.max(1,Math.floor(bet0/ask)||1);
+
+      let est=estimateExecution(bk,ask,hint);
+      fillFraction=est.fillFraction;
+      immediateFillFraction=est.immediateFillFraction;
+      continuationFillProb=est.continuationFillProb;
+      slippagePenalty=EXEC_CONFIG.enabled?est.slippagePenalty:0;
+
+      feePerContract=EXEC_CONFIG.enabled?ask*EXEC_CONFIG.feeRate:0;
+      const gasPerOrder=EXEC_CONFIG.useLiveGasEstimate?gasCostUsd:EXEC_CONFIG.gasUsdPerOrder;
+      gasPerContract=EXEC_CONFIG.enabled?gasPerOrder/hint:0;
+      effectiveAsk=Math.min(0.99,ask+feePerContract+gasPerContract+slippagePenalty);
+
+      const kPrice=EXEC_CONFIG.enabled?effectiveAsk:ask;
+      if(kPrice>0&&kPrice<1){
+        const bo=(1-kPrice)/kPrice,q=1-corP;
+        fFull=(bo*corP-q)/bo;
+        const fillMult=EXEC_CONFIG.enabled?fillFraction:1;
+        const fK=Math.max(0,fFull*KELLY_FRAC*fillMult);
+        bet=Math.round(fK*BR*100)/100;
+        contracts=bet>0?Math.floor(bet/ask):0;
+      }
+
+      // Pass 2: recompute costs with final size
+      if(contracts>0){
+        est=estimateExecution(bk,ask,contracts);
+        fillFraction=est.fillFraction;
+        immediateFillFraction=est.immediateFillFraction;
+        continuationFillProb=est.continuationFillProb;
+        slippagePenalty=EXEC_CONFIG.enabled?est.slippagePenalty:0;
+        feePerContract=EXEC_CONFIG.enabled?ask*EXEC_CONFIG.feeRate:0;
+        gasPerContract=EXEC_CONFIG.enabled?gasPerOrder/contracts:0;
+        effectiveAsk=Math.min(0.99,ask+feePerContract+gasPerContract+slippagePenalty);
+      }
+
+      edgeAfterCosts=corP-effectiveAsk;
+      trueEdge=EXEC_CONFIG.enabled?edgeAfterCosts*fillFraction:edgeAfterCosts;
+      ev=contracts>0?Math.round(contracts*fillFraction*edgeAfterCosts*100)/100:0;
     }
     if(trueEdge>.03)sig="BUY";else if(trueEdge>0)sig="LEAN";
     const row={bracket:b,rawP,corP,mktP:prices[b]||0,bid,ask,mid,spread:bk?bk.spd:0,
-      rawEdge,trueEdge,bet,ev,sig,fFull,bidD:bk?bk.bidD:0,askD:bk?bk.askD:0,last:bk?bk.last:0,modelVotes:mv};
+      rawEdge,baseTrueEdge,trueEdge,edgeAfterCosts,effectiveAsk,fillFraction,immediateFillFraction,
+      continuationFillProb,feePerContract,gasPerContract,slippagePenalty,executionAdjusted:EXEC_CONFIG.enabled,
+      bet,ev,sig,fFull,contracts,bidD:bk?bk.bidD:0,askD:bk?bk.askD:0,last:bk?bk.last:0,modelVotes:mv};
     if(LIVE_MODE&&(sig==="BUY"||sig==="LEAN")){
       const filt=applyFilters(row);
       if(!filt.pass){row.sig="FILTERED";row.filterReasons=filt.reasons;row.bet=0;row.ev=0}
@@ -833,11 +922,13 @@ function render(){
   const bn=$("sigB");
   if(best){
     bn.style.borderColor="rgba(22,163,74,.2)";$("sigT").style.color="var(--gn)";
-    $("sigT").textContent=LIVE_MODE?"BUY (strict filters passed)":"BUY YES (bias-corrected, ⅓ Kelly)";
+    $("sigT").textContent=LIVE_MODE?"BUY (strict filters passed)":"BUY YES (exec-adjusted edge, ⅓ Kelly)";
     $("sigN").textContent=best.bracket;
     $("sigD").innerHTML=[
       ["Corrected",(best.corP*100).toFixed(1)+"%","var(--gn)"],
       ["Ask",(best.ask*100).toFixed(1)+"¢","var(--tx)"],
+      ["Eff Ask",(best.effectiveAsk*100).toFixed(1)+"¢","var(--tx)"],
+      ["Fill",(best.fillFraction*100).toFixed(0)+"%","var(--tx)"],
       ["True Edge","+"+(best.trueEdge*100).toFixed(1)+"pt","var(--gn)"],
       ["Models",best.modelVotes+"/"+(CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0)),"var(--gn)"],
       ["⅓Kelly","$"+best.bet.toFixed(2),"var(--gn)"],
@@ -874,7 +965,7 @@ function render(){
     <td style="color:var(--dm)">${(a.rawP*100).toFixed(1)}%</td>
     <td style="color:var(--tx);font-weight:500">${(a.corP*100).toFixed(1)}%</td>
     <td style="color:var(--dm)">${(a.mktP*100).toFixed(0)}%</td>
-    <td style="color:var(--dm)">${a.bid.toFixed(3)}</td><td>${a.ask.toFixed(3)}</td>
+    <td style="color:var(--dm)">${a.bid.toFixed(3)}</td><td title="effective ${a.effectiveAsk.toFixed(3)}">${a.ask.toFixed(3)}</td>
     <td style="color:var(--dm)">${a.spread>0?(a.spread*100).toFixed(1)+"¢":"—"}</td>
     <td style="color:${a.rawEdge>0?"rgba(22,163,74,.5)":"var(--dm)"}">${a.rawEdge>=0?"+":""}${(a.rawEdge*100).toFixed(1)}</td>
     <td style="color:${tec};font-weight:700">${a.trueEdge>=0?"+":""}${(a.trueEdge*100).toFixed(1)}</td>
@@ -883,8 +974,9 @@ function render(){
     <td style="color:${a.ev>0?"var(--gn)":"var(--dm)"}">${a.ev>0?"+$"+a.ev.toFixed(2):"—"}</td></tr>`;
   }
   $("tbl").innerHTML=h;
+  const feeLabel=(EXEC_CONFIG.feeRate*100).toFixed(2)+"%";
   $("totals").innerHTML=tB>0?
-    `<span>Wagered: <b>$${tB.toFixed(2)}</b></span><span>E[Profit]: <b style="color:var(--gn)">+$${tE.toFixed(2)}</b></span><span>E[ROI]: <b style="color:var(--gn)">+${((tE/tB)*100).toFixed(0)}%</b></span><span style="color:var(--dm)">Gas: $${gasCostUsd.toFixed(3)} | Fee: $0</span>`:
+    `<span>Wagered: <b>$${tB.toFixed(2)}</b></span><span>E[Profit]: <b style="color:var(--gn)">+$${tE.toFixed(2)}</b></span><span>E[ROI]: <b style="color:var(--gn)">+${((tE/tB)*100).toFixed(0)}%</b></span><span style="color:var(--dm)">Gas est: $${gasCostUsd.toFixed(3)} | Fee: ${feeLabel}</span>`:
     '<span style="color:var(--dm)">No positions after analysis</span>';
 
   // Histogram
@@ -1162,7 +1254,7 @@ function renderConfig(){
 
   // Filters
   $("cfgFilters").innerHTML=
-    cfgField("minTrueEdge","Min True Edge","Minimum corrected_prob − best_ask to trigger BUY",BOT_CONFIG.minTrueEdge,"")+
+    cfgField("minTrueEdge","Min True Edge","Minimum execution-adjusted edge to trigger BUY",BOT_CONFIG.minTrueEdge,"")+
     cfgField("minModelAgreement","Min Model Agreement","Minimum distinct weather models predicting same bracket",BOT_CONFIG.minModelAgreement,"models")+
     cfgField("minAskDepth","Min Ask Depth","Minimum contracts available on ask side",BOT_CONFIG.minAskDepth,"contracts")+
     cfgField("maxAskPrice","Max Ask Price","Don't buy shares priced above this (limits downside)",BOT_CONFIG.maxAskPrice,"");
@@ -1185,7 +1277,7 @@ function renderConfig(){
     ✓ Per-model member max temps · ✓ Model agreement per degree · ✓ Raw prob distribution<br>
     ✓ Bias-corrected prob distribution · ✓ METAR current temp + day high + obs count<br>
     ✓ Market prices per bracket · ✓ Order book bid/ask/spread/depth per bracket<br>
-    ✓ True edge + raw edge per bracket · ✓ Kelly bet sizing per bracket<br>
+    ✓ Execution-adjusted true edge + raw edge per bracket · ✓ Kelly bet sizing per bracket<br>
     ✓ Signal (BUY/PASS/FILTERED) + filter reasons · ✓ Order ID + fill status + fill price<br>
     ✓ Resolution winner + actual temperature · ✓ P&L per position + cumulative<br>
     ✓ Gas cost estimate · ✓ POL/MATIC price at time of trade

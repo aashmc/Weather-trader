@@ -38,8 +38,14 @@ DAILY_LOSS_LIMIT = round(BANKROLL * DAILY_LOSS_RATIO, 2)
 def update_bankroll(balance: float):
     """Update all bankroll-derived limits from live wallet balance."""
     global BANKROLL, MAX_BET_PER_BRACKET, MAX_TOTAL_EXPOSURE, DAILY_LOSS_LIMIT
-    if balance <= 0:
-        return  # Keep previous values
+    if balance < 0:
+        return  # Keep previous values on fetch failure
+    if balance == 0:
+        BANKROLL = 0.0
+        MAX_BET_PER_BRACKET = 0.0
+        MAX_TOTAL_EXPOSURE = 0.0
+        DAILY_LOSS_LIMIT = 0.0
+        return
     BANKROLL = round(balance, 2)
     MAX_BET_PER_BRACKET = round(BANKROLL * MAX_BET_RATIO, 2)
     MAX_TOTAL_EXPOSURE = round(BANKROLL * MAX_EXPOSURE_RATIO, 2)
@@ -74,6 +80,40 @@ CONCENTRATION_TIERS = [
 # MODEL VS MARKET DIVERGENCE
 # ══════════════════════════════════════════════════════
 MAX_DIVERGENCE_BRACKETS = 2    # If model top and market fav 3+ apart → warn & skip
+
+# ══════════════════════════════════════════════════════
+# EXECUTION-AWARE EDGE
+# ══════════════════════════════════════════════════════
+EXECUTION_ADJUSTED_EDGE_ENABLED = True
+EXECUTION_FEE_RATE = 0.0            # Per-contract taker fee rate (default weather fee-free)
+EXECUTION_GAS_USD_PER_ORDER = 0.0   # Gas cost per order in USD (default 0 for relayed flow)
+EXECUTION_SPREAD_REF = 0.04         # 4c spread reference for fill/queue penalties
+EXECUTION_QUEUE_PENALTY = 0.50      # Penalize continuation fill when spread is wide
+EXECUTION_MIN_FILL = 0.05           # Floor on expected fill fraction
+EXECUTION_MAX_FILL = 0.98           # Ceiling on expected fill fraction
+
+# ══════════════════════════════════════════════════════
+# ROLLING CALIBRATION (ITEM #3)
+# ══════════════════════════════════════════════════════
+ROLLING_CALIBRATION_ENABLED = True
+ROLLING_CAL_WINDOW = 45            # Keep last N resolved errors per lead bucket
+ROLLING_CAL_MIN_SAMPLES = 20       # Minimum resolved samples before override
+ROLLING_CAL_BLEND = 0.35           # Blend weight for rolling bias vs static bias
+ROLLING_CAL_SD_FLOOR = 0.10        # Prevent collapse to near-zero variance
+
+# Lead-time buckets by hours until market-date local midnight
+LEAD_BUCKET_FAR_HOURS = 36
+LEAD_BUCKET_MID_HOURS = 12
+
+# ══════════════════════════════════════════════════════
+# MODEL QUALITY GATES (ITEM #5)
+# ══════════════════════════════════════════════════════
+# Default off to avoid unapproved PnL-impacting threshold changes.
+QUALITY_GATE_ENABLED = False
+QUALITY_WINDOW = 30
+QUALITY_MIN_SAMPLES = 20
+QUALITY_MAX_BRIER = 0.95
+QUALITY_MIN_WINNER_PROB = 0.12
 
 # ══════════════════════════════════════════════════════
 # BOT MODE
@@ -178,6 +218,35 @@ CITIES = {
 for city_cfg in CITIES.values():
     city_cfg["total_models"] = len(city_cfg["ensemble_models"]) + (
         1 if city_cfg["synthetic_model"] else 0
+    )
+
+
+def _family_from_model(model_name: str) -> str:
+    name = model_name.lower()
+    if "ecmwf_ifs" in name or "ecmwf_aifs" in name:
+        return "ecmwf"
+    if "icon" in name:
+        return "icon"
+    if "gem" in name:
+        return "gem"
+    if "ukmo" in name:
+        return "ukmo"
+    if "gfs" in name or "ncep" in name:
+        return "gfs"
+    if "kma" in name:
+        return "kma"
+    return name
+
+
+# Family-aware agreement defaults (ITEM #2)
+for city_cfg in CITIES.values():
+    fams = {_family_from_model(m) for m in city_cfg["ensemble_models"]}
+    if city_cfg.get("synthetic_model"):
+        fams.add(_family_from_model(city_cfg["synthetic_model"]))
+    city_cfg["total_families"] = len(fams)
+    city_cfg["min_families"] = min(
+        city_cfg.get("min_families", city_cfg["min_models"]),
+        city_cfg["total_families"],
     )
 
 # ══════════════════════════════════════════════════════

@@ -94,6 +94,11 @@ async def log_cycle(
         row[f"{prefix}_spread"] = round(b.get("spread", 0), 4)
         row[f"{prefix}_models"] = b.get("model_votes", 0)
         row[f"{prefix}_signal"] = b.get("signal", "")
+        row[f"{prefix}_eAsk"] = round(b.get("effective_ask", b.get("ask", 0)), 4)
+        row[f"{prefix}_fill"] = round(b.get("fill_fraction", 1.0), 3)
+        row[f"{prefix}_slip"] = round(b.get("slippage_penalty", 0), 4)
+        row[f"{prefix}_fee"] = round(b.get("fee_per_contract", 0), 4)
+        row[f"{prefix}_gas"] = round(b.get("gas_per_contract", 0), 4)
         row[f"{prefix}_kellyFull"] = round(b.get("kelly_full", 0), 4)
         row[f"{prefix}_bet"] = round(b.get("kelly_bet", 0), 2)
         row[f"{prefix}_ep"] = round(b.get("expected_profit", 0), 2)
@@ -174,6 +179,14 @@ async def log_cycle(
                 "ask_depth": round(b.get("ask_depth", 0), 1),
                 "raw_edge": round(b.get("raw_edge", 0), 6),
                 "true_edge": round(b.get("true_edge", 0), 6),
+                "edge_after_costs": round(b.get("edge_after_costs", 0), 6),
+                "effective_ask": round(b.get("effective_ask", b.get("ask", 0)), 6),
+                "fill_fraction": round(b.get("fill_fraction", 1.0), 4),
+                "immediate_fill_fraction": round(b.get("immediate_fill_fraction", 1.0), 4),
+                "continuation_fill_prob": round(b.get("continuation_fill_prob", 1.0), 4),
+                "fee_per_contract": round(b.get("fee_per_contract", 0), 6),
+                "gas_per_contract": round(b.get("gas_per_contract", 0), 6),
+                "slippage_penalty": round(b.get("slippage_penalty", 0), 6),
                 "model_votes": b.get("model_votes", 0),
                 "total_models": b.get("total_models", 0),
                 "kelly_full": round(b.get("kelly_full", 0), 6),

@@ -24,6 +24,69 @@ from market import bracket_degree
 log = logging.getLogger("strategy")
 
 
+def _clip(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+
+def _top_ask_depth(book: dict, ask: float) -> float:
+    """Depth available immediately at the current best ask."""
+    if not book:
+        return 0.0
+    depth = 0.0
+    for level in book.get("asks", []):
+        try:
+            px = float(level.get("price", 0))
+            sz = float(level.get("size", 0))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if abs(px - ask) <= 1e-9:
+            depth += max(0.0, sz)
+        elif px > ask:
+            break
+    return depth
+
+
+def _estimate_execution(book: dict | None, ask: float, contracts: int) -> dict:
+    """
+    Estimate expected fill quality over the 5-minute order timeout window.
+    """
+    if not book or contracts <= 0:
+        return {
+            "top_ask_depth": 0.0,
+            "immediate_fill_fraction": 1.0,
+            "continuation_fill_prob": 1.0,
+            "fill_fraction": 1.0,
+            "slippage_penalty": 0.0,
+        }
+
+    spread = max(0.0, float(book.get("spread", 0.0)))
+    ask_depth = max(0.0, float(book.get("ask_depth", 0.0)))
+    top_ask_depth = _top_ask_depth(book, ask)
+
+    immediate = _clip(top_ask_depth / max(1.0, float(contracts)), 0.0, 1.0)
+    spread_ref = max(0.0001, config.EXECUTION_SPREAD_REF)
+    spread_score = _clip(1.0 - spread / spread_ref, 0.0, 1.0)
+    depth_score = _clip(ask_depth / max(1.0, float(contracts)), 0.0, 1.0)
+
+    queue_penalty = _clip((spread / spread_ref) * config.EXECUTION_QUEUE_PENALTY, 0.0, 0.8)
+    continuation = _clip(
+        0.10 + 0.55 * spread_score + 0.35 * depth_score - queue_penalty,
+        config.EXECUTION_MIN_FILL,
+        config.EXECUTION_MAX_FILL,
+    )
+
+    fill_fraction = immediate + (1.0 - immediate) * continuation
+    slippage_penalty = spread * (1.0 - immediate) * 0.50
+
+    return {
+        "top_ask_depth": top_ask_depth,
+        "immediate_fill_fraction": immediate,
+        "continuation_fill_prob": continuation,
+        "fill_fraction": _clip(fill_fraction, config.EXECUTION_MIN_FILL, 1.0),
+        "slippage_penalty": max(0.0, slippage_penalty),
+    }
+
+
 # ══════════════════════════════════════════════════════
 # STEP 1: MARKET MATURITY CHECK
 # ══════════════════════════════════════════════════════
@@ -175,7 +238,9 @@ def analyze_brackets(
     market_probs: dict[str, float],
     books: dict[str, dict],
     model_votes: dict[int, int],
+    family_votes: dict[int, int],
     total_models: int,
+    total_families: int,
     existing_positions: set[str],
     current_exposure: float,
     city_config: dict,
@@ -189,6 +254,7 @@ def analyze_brackets(
     - divergence: (bool, int, str, str)
     - signals: list[dict]  (all candidates with analysis)
     - actionable: list[dict]  (BUY signals only)
+    Uses both model-level and family-level agreement filters.
     """
     result = {
         "maturity": (False, "not checked"),
@@ -251,8 +317,10 @@ def analyze_brackets(
 
     # ── Step 4 + 6: Analyze each candidate ──
     min_models = city_config.get("min_models", 2)
+    min_families = city_config.get("min_families", min_models)
     min_edge = city_config.get("min_edge", 0.05)
     remaining_budget = config.MAX_TOTAL_EXPOSURE - current_exposure
+    total_families = max(1, total_families)
 
     signals = []
     for b in candidates:
@@ -269,36 +337,88 @@ def analyze_brackets(
         ask_depth = book["ask_depth"] if book else 0.0
 
         raw_edge = cor_p - (bid + ask) / 2 if book else cor_p - mkt_p
-        true_edge = cor_p - ask
+        base_true_edge = cor_p - ask
 
         # Model votes for this bracket
         deg = bracket_degree(b)
         mv = model_votes.get(deg, 0)
+        fv = family_votes.get(deg, 0)
         if b.get("type") == "range":
             for d in range(b["low"], b["high"] + 1):
                 mv = max(mv, model_votes.get(d, 0))
+                fv = max(fv, family_votes.get(d, 0))
 
         # Kelly with concentration scaling
         kelly_full = 0.0
         kelly_bet = 0.0
         expected_profit = 0.0
         contracts = 0
+        fill_fraction = 1.0
+        immediate_fill_fraction = 1.0
+        continuation_fill_prob = 1.0
+        fee_per_contract = 0.0
+        gas_per_contract = 0.0
+        slippage_penalty = 0.0
+        effective_ask = ask
+        edge_after_costs = base_true_edge
+        true_edge = base_true_edge
 
         if ask > 0 and ask < 1 and cor_p > 0:
+            # Pass 1: base-size estimate on raw ask
             b_odds = (1 - ask) / ask
             q = 1 - cor_p
-            kelly_full = (b_odds * cor_p - q) / b_odds
-            # Apply ⅓ Kelly × concentration multiplier
-            kelly_frac = max(0, kelly_full * KELLY_FRACTION * kelly_mult)
-            kelly_bet = round(kelly_frac * config.BANKROLL, 2)
+            base_kelly = (b_odds * cor_p - q) / b_odds
+            base_kelly_frac = max(0, base_kelly * KELLY_FRACTION * kelly_mult)
+            base_bet = round(base_kelly_frac * config.BANKROLL, 2)
+            base_bet = min(base_bet, config.MAX_BET_PER_BRACKET)
+            base_bet = min(base_bet, max(0, remaining_budget))
+            contracts_hint = max(1, int(base_bet / ask)) if base_bet > 0 else 1
 
-            # Apply caps
-            kelly_bet = min(kelly_bet, config.MAX_BET_PER_BRACKET)
-            kelly_bet = min(kelly_bet, max(0, remaining_budget))
+            est = _estimate_execution(book, ask, contracts_hint)
+            fill_fraction = est["fill_fraction"]
+            immediate_fill_fraction = est["immediate_fill_fraction"]
+            continuation_fill_prob = est["continuation_fill_prob"]
+            slippage_penalty = est["slippage_penalty"] if config.EXECUTION_ADJUSTED_EDGE_ENABLED else 0.0
 
-            if kelly_bet > 0 and ask > 0:
-                contracts = int(kelly_bet / ask)
-                expected_profit = round(kelly_bet * (cor_p / ask - 1), 2)
+            fee_per_contract = ask * config.EXECUTION_FEE_RATE if config.EXECUTION_ADJUSTED_EDGE_ENABLED else 0.0
+            gas_per_contract = (
+                config.EXECUTION_GAS_USD_PER_ORDER / max(1, contracts_hint)
+                if config.EXECUTION_ADJUSTED_EDGE_ENABLED else 0.0
+            )
+            effective_ask = min(0.99, ask + fee_per_contract + gas_per_contract + slippage_penalty)
+
+            kelly_price = effective_ask if config.EXECUTION_ADJUSTED_EDGE_ENABLED else ask
+            if kelly_price > 0 and kelly_price < 1:
+                eff_b = (1 - kelly_price) / kelly_price
+                kelly_full = (eff_b * cor_p - (1 - cor_p)) / eff_b
+                fill_mult = fill_fraction if config.EXECUTION_ADJUSTED_EDGE_ENABLED else 1.0
+                kelly_frac = max(0, kelly_full * KELLY_FRACTION * kelly_mult * fill_mult)
+                kelly_bet = round(kelly_frac * config.BANKROLL, 2)
+
+                # Apply caps
+                kelly_bet = min(kelly_bet, config.MAX_BET_PER_BRACKET)
+                kelly_bet = min(kelly_bet, max(0, remaining_budget))
+
+                if kelly_bet > 0 and ask > 0:
+                    contracts = int(kelly_bet / ask)
+
+            # Pass 2: refresh execution metrics using final contract count
+            if contracts > 0:
+                est2 = _estimate_execution(book, ask, contracts)
+                fill_fraction = est2["fill_fraction"]
+                immediate_fill_fraction = est2["immediate_fill_fraction"]
+                continuation_fill_prob = est2["continuation_fill_prob"]
+                slippage_penalty = est2["slippage_penalty"] if config.EXECUTION_ADJUSTED_EDGE_ENABLED else 0.0
+                fee_per_contract = ask * config.EXECUTION_FEE_RATE if config.EXECUTION_ADJUSTED_EDGE_ENABLED else 0.0
+                gas_per_contract = (
+                    config.EXECUTION_GAS_USD_PER_ORDER / contracts
+                    if config.EXECUTION_ADJUSTED_EDGE_ENABLED else 0.0
+                )
+                effective_ask = min(0.99, ask + fee_per_contract + gas_per_contract + slippage_penalty)
+
+            edge_after_costs = cor_p - effective_ask
+            true_edge = edge_after_costs * fill_fraction if config.EXECUTION_ADJUSTED_EDGE_ENABLED else edge_after_costs
+            expected_profit = round(contracts * fill_fraction * edge_after_costs, 2) if contracts > 0 else 0.0
 
         # Filter checks
         filter_reasons = []
@@ -309,6 +429,10 @@ def analyze_brackets(
         if mv < min_models:
             filter_reasons.append(
                 f"models {mv}/{total_models} < {min_models}"
+            )
+        if fv < min_families:
+            filter_reasons.append(
+                f"families {fv}/{total_families} < {min_families}"
             )
         if ask_depth < MIN_ASK_DEPTH:
             filter_reasons.append(
@@ -340,9 +464,21 @@ def analyze_brackets(
             "bid_depth": bid_depth,
             "ask_depth": ask_depth,
             "raw_edge": raw_edge,
+            "base_true_edge": base_true_edge,
             "true_edge": true_edge,
+            "edge_after_costs": edge_after_costs,
+            "effective_ask": effective_ask,
+            "fill_fraction": fill_fraction,
+            "immediate_fill_fraction": immediate_fill_fraction,
+            "continuation_fill_prob": continuation_fill_prob,
+            "fee_per_contract": fee_per_contract,
+            "gas_per_contract": gas_per_contract,
+            "slippage_penalty": slippage_penalty,
+            "execution_adjusted": config.EXECUTION_ADJUSTED_EDGE_ENABLED,
             "model_votes": mv,
+            "family_votes": fv,
             "total_models": total_models,
+            "total_families": total_families,
             "kelly_full": kelly_full,
             "kelly_bet": kelly_bet,
             "kelly_multiplier": kelly_mult,

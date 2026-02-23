@@ -64,12 +64,11 @@ def get_daily_pnl() -> float:
 
 
 def get_daily_exposure() -> float:
-    """Get total $ wagered today across all active (unresolved) positions."""
+    """Get total $ wagered across all active (unresolved) positions."""
     state = _load_state()
     total = 0.0
-    today = today_str()
-    for key, pos in state.get("positions", {}).items():
-        if pos.get("market_date") == today and not pos.get("resolved"):
+    for pos in state.get("positions", {}).values():
+        if not pos.get("resolved"):
             total += pos.get("wager", 0.0)
     return total
 

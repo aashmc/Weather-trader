@@ -56,6 +56,17 @@ def _model_tag(member_key: str) -> str:
     return "x"
 
 
+def _model_family(tag: str) -> str:
+    """Collapse related models into dependence-adjusted families."""
+    if tag in ("ifs", "aifs"):
+        return "ecmwf"
+    if tag == "ico":
+        return "icon"
+    if tag in ("gem", "ukmo", "gfs", "kma"):
+        return tag
+    return tag
+
+
 async def fetch_ensemble(city: dict, date_str: str) -> dict:
     """
     Fetch ensemble forecasts for a city and date.
@@ -65,6 +76,7 @@ async def fetch_ensemble(city: dict, date_str: str) -> dict:
             "mean": float,              # ensemble mean
             "count": int,               # total members
             "model_votes": {int_deg: int},  # how many distinct models predict each degree
+            "family_votes": {int_deg: int}, # how many distinct model families predict each degree
             "raw_dist": {int_deg: float},   # raw probability distribution by degree
         }
     """
@@ -93,7 +105,8 @@ async def fetch_ensemble(city: dict, date_str: str) -> dict:
         raise ValueError(f"No data for {date_str} in ensemble response")
 
     max_temps = []
-    model_votes_per_deg = {}  # {degree: {model_tag: True}}
+    model_votes_per_deg = {}   # {degree: {model_tag: True}}
+    family_votes_per_deg = {}  # {degree: {family_tag: True}}
 
     for mk in member_keys:
         vals = hourly[mk]
@@ -108,8 +121,10 @@ async def fetch_ensemble(city: dict, date_str: str) -> dict:
         max_temps.append(mkt_temp)
 
         tag = _model_tag(mk)
+        fam = _model_family(tag)
         rd = round(mkt_temp)
         model_votes_per_deg.setdefault(rd, set()).add(tag)
+        family_votes_per_deg.setdefault(rd, set()).add(fam)
 
     # Synthetic model (e.g., KMA for Seoul)
     if city.get("synthetic_model"):
@@ -127,6 +142,7 @@ async def fetch_ensemble(city: dict, date_str: str) -> dict:
                     max_temps.append(t)
                     rd = round(t)
                     model_votes_per_deg.setdefault(rd, set()).add("kma")
+                    family_votes_per_deg.setdefault(rd, set()).add("kma")
                 log.info(
                     f"{city['name']}: KMA synthetic {mkt_temp:.1f} (10 members added)"
                 )
@@ -138,6 +154,7 @@ async def fetch_ensemble(city: dict, date_str: str) -> dict:
 
     # Convert model_votes_per_deg sets to counts
     model_votes = {deg: len(models) for deg, models in model_votes_per_deg.items()}
+    family_votes = {deg: len(fams) for deg, fams in family_votes_per_deg.items()}
 
     # Build raw distribution
     mean_temp = sum(max_temps) / len(max_temps)
@@ -153,6 +170,7 @@ async def fetch_ensemble(city: dict, date_str: str) -> dict:
         "mean": mean_temp,
         "count": len(max_temps),
         "model_votes": model_votes,
+        "family_votes": family_votes,
         "raw_dist": raw_dist,
     }
 

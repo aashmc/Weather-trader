@@ -16,6 +16,13 @@ import config
 from config import CITIES, CYCLE_INTERVAL_SECONDS, ORDER_TIMEOUT_SECONDS, TELEGRAM_POLL_SECONDS, update_bankroll
 from ensemble import fetch_ensemble, bias_correct, map_to_brackets
 from metar import fetch_metar
+from model_quality import (
+    get_lead_bucket,
+    get_dynamic_bias,
+    record_forecast_snapshot,
+    check_quality_gate,
+    record_resolution_quality,
+)
 from market import (
     fetch_market, fetch_all_books, place_limit_order,
     cancel_order, check_order_status, bracket_degree,
@@ -127,6 +134,7 @@ async def poll_telegram_commands():
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(url, params=params)
+            r.raise_for_status()
             data = r.json()
 
         for update in data.get("result", []):
@@ -146,14 +154,20 @@ async def poll_telegram_commands():
                 await answer_callback(token, cb_id)
 
                 if cb_data.startswith("buy_"):
-                    sig_id = int(cb_data.replace("buy_", ""))
-                    await execute_pending_signal(sig_id)
+                    try:
+                        sig_id = int(cb_data.replace("buy_", ""))
+                        await execute_pending_signal(sig_id)
+                    except ValueError:
+                        await send_telegram("❌ Invalid signal ID.")
                 elif cb_data.startswith("skip_"):
-                    sig_id = int(cb_data.replace("skip_", ""))
-                    pending = load_pending()
-                    pending = [s for s in pending if s.get("pending_id") != sig_id]
-                    save_pending(pending)
-                    await send_telegram(f"⏭ Signal #{sig_id} skipped.")
+                    try:
+                        sig_id = int(cb_data.replace("skip_", ""))
+                        pending = load_pending()
+                        pending = [s for s in pending if s.get("pending_id") != sig_id]
+                        save_pending(pending)
+                        await send_telegram(f"⏭ Signal #{sig_id} skipped.")
+                    except ValueError:
+                        await send_telegram("❌ Invalid signal ID.")
                 elif cb_data == "buyall":
                     pending = load_pending()
                     if pending:
@@ -407,11 +421,31 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
 
         # 2. Fetch ensemble forecasts + bias correction
         ensemble = await fetch_ensemble(city, date_str)
+        lead_bucket, _lead_hours = get_lead_bucket(city["tz"], date_str)
+        bias_mean_used, bias_sd_used, bias_meta = get_dynamic_bias(
+            city_name=city_name,
+            base_mean=city["bias_mean"],
+            base_sd=city["bias_sd"],
+            lead_bucket=lead_bucket,
+        )
         corrected_dist = bias_correct(
-            ensemble["raw_dist"], city["bias_mean"], city["bias_sd"]
+            ensemble["raw_dist"], bias_mean_used, bias_sd_used
         )
         raw_probs = map_to_brackets(ensemble["raw_dist"], brackets)
         corrected_probs = map_to_brackets(corrected_dist, brackets)
+        record_forecast_snapshot(
+            city_name=city_name,
+            date_str=date_str,
+            ensemble_mean=ensemble["mean"],
+            lead_bucket=lead_bucket,
+            corrected_probs=corrected_probs,
+        )
+        if bias_meta.get("used_rolling"):
+            log.info(
+                f"  Rolling bias ({lead_bucket}, {bias_meta.get('samples', 0)} samples): "
+                f"{city['bias_mean']:+.2f}/{city['bias_sd']:.2f} -> "
+                f"{bias_mean_used:+.2f}/{bias_sd_used:.2f}"
+            )
 
         # 3. Fetch METAR
         metar = await fetch_metar(city, date_str)
@@ -430,7 +464,9 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
             market_probs=prices,
             books=books,
             model_votes=ensemble["model_votes"],
+            family_votes=ensemble.get("family_votes", {}),
             total_models=city["total_models"],
+            total_families=city.get("total_families", city["total_models"]),
             existing_positions=existing,
             current_exposure=exposure,
             city_config=city,
@@ -450,7 +486,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                 raw_dist=ensemble["raw_dist"], corrected_dist=corrected_dist,
                 model_votes=ensemble["model_votes"], market_prices=prices,
                 books_snapshot=books, max_temps=ensemble["max_temps"],
-                bias_mean=city["bias_mean"], bias_sd=city["bias_sd"],
+                bias_mean=bias_mean_used, bias_sd=bias_sd_used,
                 current_exposure=exposure, daily_pnl=get_daily_pnl(),
                 v5_favorite=None, v5_concentration=0, v5_kelly_multiplier=0,
                 v5_maturity={"mature": False, "reason": maturity_reason},
@@ -480,7 +516,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                 raw_dist=ensemble["raw_dist"], corrected_dist=corrected_dist,
                 model_votes=ensemble["model_votes"], market_prices=prices,
                 books_snapshot=books, max_temps=ensemble["max_temps"],
-                bias_mean=city["bias_mean"], bias_sd=city["bias_sd"],
+                bias_mean=bias_mean_used, bias_sd=bias_sd_used,
                 current_exposure=exposure, daily_pnl=get_daily_pnl(),
                 v5_favorite=analysis.get("favorite"), v5_concentration=analysis.get("concentration", 0),
                 v5_kelly_multiplier=analysis.get("kelly_multiplier", 0),
@@ -503,6 +539,11 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
 
         # 6. Check if trading allowed
         tradeable, reason = can_trade()
+        quality_ok, quality_reason, _quality_meta = check_quality_gate(city_name)
+        if tradeable and not quality_ok:
+            tradeable = False
+            reason = f"quality gate: {quality_reason}"
+            log.warning(f"{city_name}: Trading blocked — quality gate ({quality_reason})")
         mode = get_mode()
 
         # 7. Handle signals based on mode
@@ -671,8 +712,8 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
             market_prices=prices,
             books_snapshot=books,
             max_temps=ensemble["max_temps"],
-            bias_mean=city["bias_mean"],
-            bias_sd=city["bias_sd"],
+            bias_mean=bias_mean_used,
+            bias_sd=bias_sd_used,
             current_exposure=exposure,
             daily_pnl=get_daily_pnl(),
             v5_favorite=analysis.get("favorite"),
@@ -766,6 +807,15 @@ async def check_resolutions():
 
             res = await market_check_resolution(city, date_str)
             if res["resolved"] and res["winner"]:
+                try:
+                    q = await record_resolution_quality(city, date_str, res["winner"])
+                    log.info(
+                        f"Quality update {city_name} {date_str}: "
+                        f"winner_p={q.get('winner_prob', 0):.3f}, brier={q.get('brier', 0):.3f}"
+                    )
+                except Exception as qe:
+                    log.warning(f"Quality update failed for {city_name} {date_str}: {qe}")
+
                 pnl = record_resolution(city_name, date_str, res["winner"])
 
                 await alert_resolution(
@@ -916,7 +966,7 @@ async def main():
         bankroll_str = "⚠️ FETCH FAILED (no trades until resolved)"
 
     log.info(f"  Mode: {mode}")
-    log.info(f"  Bankroll: {bankroll_str} | Kelly: ⅓ | Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f}")
+    log.info(f"  Bankroll: {bankroll_str} | Kelly: full × conc | Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f}")
     log.info(f"  Strategy: v5 (favorite ±1, per-city filters, concentration)")
     log.info(f"  Max ask: 50¢ | Telegram poll: {TELEGRAM_POLL_SECONDS}s")
     log.info(f"  Kill switch: ${config.DAILY_LOSS_LIMIT:.2f} daily loss")
@@ -929,7 +979,7 @@ async def main():
         f"🚀 <b>Weather Trader Bot v5 Started</b>\n"
         f"  Mode: {mode}\n"
         f"  Strategy: favorite ±1, concentration Kelly\n"
-        f"  Bankroll: {bankroll_str} | Kelly: ⅓ × conc\n"
+        f"  Bankroll: {bankroll_str} | Kelly: full × conc\n"
         f"  Monitoring: London, Seoul, NYC, Seattle\n"
         f"  Cycle: every 30 min | Poll: every 60s\n\n"
         f"  <b>Commands:</b>\n"

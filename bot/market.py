@@ -68,6 +68,21 @@ def parse_bracket(label: str) -> dict | None:
     return None
 
 
+def _parse_json_maybe(value):
+    """
+    Parse API fields that may be JSON strings or already-parsed lists.
+    Returns parsed value or None.
+    """
+    if isinstance(value, (list, dict)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
 def temp_to_bracket(temp: float, brackets: list[dict]) -> str | None:
     """Map a temperature to a bracket label."""
     rd = round(temp)
@@ -142,7 +157,7 @@ async def fetch_market(city: dict, date_str: str) -> dict:
 
         # Prices
         try:
-            op = json.loads(m.get("outcomePrices", "[]"))
+            op = _parse_json_maybe(m.get("outcomePrices", "[]")) or []
             if op:
                 yes_price = float(op[0])
                 prices[title] = yes_price
@@ -150,15 +165,15 @@ async def fetch_market(city: dict, date_str: str) -> dict:
                 if yes_price >= 0.99:
                     winner = title
                     resolved = True
-        except (json.JSONDecodeError, IndexError, ValueError):
-            continue
+        except (IndexError, ValueError, TypeError):
+            pass
 
         # Token IDs for CLOB
         try:
-            tids = json.loads(m.get("clobTokenIds", "[]"))
+            tids = _parse_json_maybe(m.get("clobTokenIds", "[]")) or []
             if tids:
                 token_ids[title] = tids[0]  # YES token
-        except (json.JSONDecodeError, IndexError):
+        except (IndexError, TypeError):
             pass
 
         bracket_labels.append(title)

@@ -11,8 +11,9 @@ Full signal pipeline:
 """
 
 import logging
+import config
 from config import (
-    KELLY_FRACTION, KELLY_CAP, BANKROLL, MAX_BET_PER_BRACKET, MAX_TOTAL_EXPOSURE,
+    KELLY_FRACTION, KELLY_CAP,
     MIN_ASK_DEPTH, MAX_ASK_PRICE,
     MATURITY_MIN_FAV_PRICE, MATURITY_MAX_FAV_SPREAD, MATURITY_MIN_LIQUID_BRACKETS,
     CONCENTRATION_MIN, CONCENTRATION_TIERS,
@@ -251,7 +252,7 @@ def analyze_brackets(
     # ── Step 4 + 6: Analyze each candidate ──
     min_models = city_config.get("min_models", 2)
     min_edge = city_config.get("min_edge", 0.05)
-    remaining_budget = MAX_TOTAL_EXPOSURE - current_exposure
+    remaining_budget = config.MAX_TOTAL_EXPOSURE - current_exposure
 
     signals = []
     for b in candidates:
@@ -289,10 +290,10 @@ def analyze_brackets(
             kelly_full = (b_odds * cor_p - q) / b_odds
             # Apply ⅓ Kelly × concentration multiplier
             kelly_frac = max(0, kelly_full * KELLY_FRACTION * kelly_mult)
-            kelly_bet = round(kelly_frac * BANKROLL, 2)
+            kelly_bet = round(kelly_frac * config.BANKROLL, 2)
 
             # Apply caps
-            kelly_bet = min(kelly_bet, MAX_BET_PER_BRACKET)
+            kelly_bet = min(kelly_bet, config.MAX_BET_PER_BRACKET)
             kelly_bet = min(kelly_bet, max(0, remaining_budget))
 
             if kelly_bet > 0 and ask > 0:

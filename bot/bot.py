@@ -13,12 +13,13 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import config
-from config import CITIES, CYCLE_INTERVAL_SECONDS, ORDER_TIMEOUT_SECONDS, TELEGRAM_POLL_SECONDS, DAILY_LOSS_LIMIT
+from config import CITIES, CYCLE_INTERVAL_SECONDS, ORDER_TIMEOUT_SECONDS, TELEGRAM_POLL_SECONDS, update_bankroll
 from ensemble import fetch_ensemble, bias_correct, map_to_brackets
 from metar import fetch_metar
 from market import (
     fetch_market, fetch_all_books, place_limit_order,
     cancel_order, check_order_status, bracket_degree,
+    fetch_wallet_balance,
 )
 from strategy import analyze_brackets, get_actionable_signals, compute_totals
 from risk import (
@@ -791,7 +792,7 @@ async def check_resolutions():
 
                 # Check if kill switch should trigger
                 if is_kill_switch_active():
-                    await alert_kill_switch(get_daily_pnl(), DAILY_LOSS_LIMIT)
+                    await alert_kill_switch(get_daily_pnl(), config.DAILY_LOSS_LIMIT)
 
         except Exception as e:
             log.warning(f"Resolution check failed for {city_name} {date_str}: {e}")
@@ -825,6 +826,19 @@ async def run_cycle():
     if is_kill_switch_active():
         log.warning("Kill switch active — skipping trading cycle")
         return
+
+    # Fetch live wallet balance and update limits
+    balance = await fetch_wallet_balance()
+    if balance > 0:
+        update_bankroll(balance)
+        log.info(
+            f"💰 Bankroll: ${config.BANKROLL:.2f} | "
+            f"Max bet: ${config.MAX_BET_PER_BRACKET:.2f} | "
+            f"Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f} | "
+            f"Kill: ${config.DAILY_LOSS_LIMIT:.2f}"
+        )
+    else:
+        log.warning(f"Balance fetch failed — using ${config.BANKROLL:.2f} from last cycle")
 
     dates = get_market_dates()
     city_summaries = []
@@ -884,11 +898,18 @@ async def main():
     log.info("=" * 60)
     log.info("  WEATHER TRADER BOT — STARTING")
     log.info("=" * 60)
+
+    # Fetch initial wallet balance
+    balance = await fetch_wallet_balance()
+    if balance > 0:
+        update_bankroll(balance)
+    bankroll_str = f"${config.BANKROLL:.2f}"
+
     log.info(f"  Mode: {mode}")
-    log.info(f"  Bankroll: $9 | Kelly: ⅓ | Max exposure: $3.60")
+    log.info(f"  Bankroll: {bankroll_str} | Kelly: ⅓ | Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f}")
     log.info(f"  Strategy: v5 (favorite ±1, per-city filters, concentration)")
     log.info(f"  Max ask: 50¢ | Telegram poll: {TELEGRAM_POLL_SECONDS}s")
-    log.info(f"  Kill switch: $5.40 daily loss")
+    log.info(f"  Kill switch: ${config.DAILY_LOSS_LIMIT:.2f} daily loss")
     log.info(f"  Cycle interval: {CYCLE_INTERVAL_SECONDS}s")
     log.info(f"  Wallet configured: {'YES' if POLYGON_PRIVATE_KEY else 'NO'}")
     log.info(f"  Telegram configured: {'YES' if TELEGRAM_BOT_TOKEN else 'NO'}")
@@ -898,7 +919,7 @@ async def main():
         f"🚀 <b>Weather Trader Bot v5 Started</b>\n"
         f"  Mode: {mode}\n"
         f"  Strategy: favorite ±1, concentration Kelly\n"
-        f"  Bankroll: $9 | Kelly: ⅓ × conc\n"
+        f"  Bankroll: {bankroll_str} | Kelly: ⅓ × conc\n"
         f"  Monitoring: London, Seoul, NYC, Seattle\n"
         f"  Cycle: every 30 min | Poll: every 60s\n\n"
         f"  <b>Commands:</b>\n"

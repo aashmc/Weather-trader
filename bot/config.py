@@ -19,12 +19,31 @@ GOOGLE_SHEET_WEBHOOK = os.getenv("GOOGLE_SHEET_WEBHOOK", "")
 # ══════════════════════════════════════════════════════
 # TRADING PARAMETERS
 # ══════════════════════════════════════════════════════
-BANKROLL = 9.0
+BANKROLL_FALLBACK = 9.0                # Fallback if wallet query fails
 KELLY_FRACTION = 0.33          # ⅓ Kelly (before concentration scaling)
 KELLY_CAP = 0.75               # Max Kelly multiplier after concentration scaling
-MAX_BET_PER_BRACKET = 0.90     # 10% of bankroll
-MAX_TOTAL_EXPOSURE = 3.60      # 40% of bankroll
-DAILY_LOSS_LIMIT = 5.40        # 60% of bankroll — kill switch
+
+# These are ratios — actual $ amounts computed dynamically from wallet balance
+MAX_BET_RATIO = 0.10           # 10% of bankroll per bracket
+MAX_EXPOSURE_RATIO = 0.40      # 40% of bankroll total exposure
+DAILY_LOSS_RATIO = 0.60        # 60% of bankroll — kill switch
+
+# Live values — updated each cycle by update_bankroll()
+BANKROLL = BANKROLL_FALLBACK
+MAX_BET_PER_BRACKET = round(BANKROLL * MAX_BET_RATIO, 2)
+MAX_TOTAL_EXPOSURE = round(BANKROLL * MAX_EXPOSURE_RATIO, 2)
+DAILY_LOSS_LIMIT = round(BANKROLL * DAILY_LOSS_RATIO, 2)
+
+
+def update_bankroll(balance: float):
+    """Update all bankroll-derived limits from live wallet balance."""
+    global BANKROLL, MAX_BET_PER_BRACKET, MAX_TOTAL_EXPOSURE, DAILY_LOSS_LIMIT
+    if balance <= 0:
+        return  # Keep previous values
+    BANKROLL = round(balance, 2)
+    MAX_BET_PER_BRACKET = round(BANKROLL * MAX_BET_RATIO, 2)
+    MAX_TOTAL_EXPOSURE = round(BANKROLL * MAX_EXPOSURE_RATIO, 2)
+    DAILY_LOSS_LIMIT = round(BANKROLL * DAILY_LOSS_RATIO, 2)
 
 # Global filters (applied to all cities)
 MIN_ASK_DEPTH = 20             # 20 contracts minimum on ask side

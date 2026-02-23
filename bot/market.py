@@ -14,6 +14,15 @@ log = logging.getLogger("market")
 
 GAMMA_API = "https://gamma-api.polymarket.com/events"
 CLOB_HOST = "https://clob.polymarket.com"
+
+# Polygon USDC.e (Polymarket collateral)
+USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+USDC_DECIMALS = 6
+POLYGON_RPC = "https://polygon-rpc.com"
+
+# Minimal ERC-20 ABI for balanceOf
+BALANCE_OF_SELECTOR = "0x70a08231"  # keccak256("balanceOf(address)")[:4]
+
 MONTHS = [
     "january", "february", "march", "april", "may", "june",
     "july", "august", "september", "october", "november", "december",
@@ -277,6 +286,48 @@ def get_clob_client():
     except Exception as e:
         log.error(f"CLOB client init failed: {e}")
         return None
+
+
+async def fetch_wallet_balance() -> float:
+    """
+    Fetch USDC.e balance from Polygon for the configured wallet.
+    Returns balance in USD (float), or -1 on failure.
+    """
+    from config import POLYGON_PRIVATE_KEY
+    if not POLYGON_PRIVATE_KEY:
+        return -1
+
+    try:
+        from eth_account import Account
+        acct = Account.from_key(POLYGON_PRIVATE_KEY)
+        address = acct.address.lower()
+
+        # eth_call to USDC.e balanceOf(address)
+        # Pad address to 32 bytes
+        padded = address.replace("0x", "").zfill(64)
+        data = BALANCE_OF_SELECTOR + padded
+
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [
+                {"to": USDC_ADDRESS, "data": data},
+                "latest",
+            ],
+            "id": 1,
+        }
+
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(POLYGON_RPC, json=payload)
+            result = r.json().get("result", "0x0")
+            raw = int(result, 16)
+            balance = raw / (10 ** USDC_DECIMALS)
+            log.info(f"Wallet balance: ${balance:.2f} USDC")
+            return balance
+
+    except Exception as e:
+        log.warning(f"Balance fetch failed: {e}")
+        return -1
 
 
 async def place_limit_order(

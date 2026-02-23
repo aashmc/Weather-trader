@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config import DAILY_LOSS_LIMIT, MAX_TOTAL_EXPOSURE
+import config
 
 log = logging.getLogger("risk")
 
@@ -88,11 +88,11 @@ def get_existing_positions(city_name: str, date_str: str) -> set[str]:
 def can_trade() -> tuple[bool, str]:
     """Check if trading is allowed right now."""
     if is_kill_switch_active():
-        return False, f"Kill switch active (daily loss ≥ ${DAILY_LOSS_LIMIT})"
+        return False, f"Kill switch active (daily loss ≥ ${config.DAILY_LOSS_LIMIT})"
 
     exposure = get_daily_exposure()
-    if exposure >= MAX_TOTAL_EXPOSURE:
-        return False, f"Max exposure reached (${exposure:.2f} ≥ ${MAX_TOTAL_EXPOSURE})"
+    if exposure >= config.MAX_TOTAL_EXPOSURE:
+        return False, f"Max exposure reached (${exposure:.2f} ≥ ${config.MAX_TOTAL_EXPOSURE})"
 
     return True, "OK"
 
@@ -210,11 +210,11 @@ def record_resolution(city_name: str, date_str: str, winner: str):
 
     # Check kill switch
     daily = state["daily_pnl"].get(today, 0.0)
-    if daily <= -DAILY_LOSS_LIMIT:
+    if daily <= -config.DAILY_LOSS_LIMIT:
         state.setdefault("kill_switch", {})[today] = True
         log.warning(
             f"KILL SWITCH TRIGGERED: daily P&L ${daily:.2f} "
-            f"exceeds -${DAILY_LOSS_LIMIT} limit"
+            f"exceeds -${config.DAILY_LOSS_LIMIT} limit"
         )
 
     _save_state(state)

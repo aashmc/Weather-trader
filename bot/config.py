@@ -20,7 +20,6 @@ GOOGLE_SHEET_WEBHOOK = os.getenv("GOOGLE_SHEET_WEBHOOK", "")
 # TRADING PARAMETERS
 # ══════════════════════════════════════════════════════
 BANKROLL_FALLBACK = 9.0                # Fallback if wallet query fails
-MIN_ORDER_SIZE = 1.0                   # Polymarket minimum order $1
 KELLY_FRACTION = 0.33          # ⅓ Kelly (before concentration scaling)
 KELLY_CAP = 0.75               # Max Kelly multiplier after concentration scaling
 

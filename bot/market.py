@@ -261,16 +261,32 @@ def get_clob_client():
     try:
         from py_clob_client.client import ClobClient
         from config import POLYGON_PRIVATE_KEY, POLYMARKET_HOST, CHAIN_ID
+        import os
 
         if not POLYGON_PRIVATE_KEY:
             log.error("No POLYGON_PRIVATE_KEY set — orders disabled")
             return None
 
-        _clob_client = ClobClient(
-            POLYMARKET_HOST,
-            key=POLYGON_PRIVATE_KEY,
-            chain_id=CHAIN_ID,
-        )
+        proxy_wallet = os.getenv("PROXY_WALLET", "").strip()
+
+        if proxy_wallet:
+            # Magic/email wallet: sign with private key, funds in proxy
+            _clob_client = ClobClient(
+                POLYMARKET_HOST,
+                key=POLYGON_PRIVATE_KEY,
+                chain_id=CHAIN_ID,
+                signature_type=1,
+                funder=proxy_wallet,
+            )
+            log.info(f"CLOB client: signature_type=1, funder={proxy_wallet[:10]}...")
+        else:
+            # EOA direct wallet
+            _clob_client = ClobClient(
+                POLYMARKET_HOST,
+                key=POLYGON_PRIVATE_KEY,
+                chain_id=CHAIN_ID,
+            )
+            log.info("CLOB client: signature_type=0 (EOA direct)")
 
         # Derive or create API creds
         try:

@@ -19,7 +19,7 @@ GOOGLE_SHEET_WEBHOOK = os.getenv("GOOGLE_SHEET_WEBHOOK", "")
 # ══════════════════════════════════════════════════════
 # TRADING PARAMETERS
 # ══════════════════════════════════════════════════════
-BANKROLL_FALLBACK = 9.0                # Fallback if wallet query fails
+BANKROLL_FALLBACK = 0.0                # If wallet query fails, don't trade
 KELLY_FRACTION = 0.33          # ⅓ Kelly (before concentration scaling)
 KELLY_CAP = 0.75               # Max Kelly multiplier after concentration scaling
 

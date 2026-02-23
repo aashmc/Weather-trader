@@ -290,70 +290,39 @@ def get_clob_client():
 
 async def fetch_wallet_balance() -> float:
     """
-    Fetch USDC.e balance from the Polymarket proxy wallet on Polygon.
-    Tries PROXY_WALLET env var first, then derives it from the private key.
+    Fetch available USDC balance via Polymarket CLOB API.
     Returns balance in USD (float), or -1 on failure.
     """
-    from config import POLYGON_PRIVATE_KEY
-    if not POLYGON_PRIVATE_KEY:
-        return -1
-
     try:
-        import os
-        proxy_addr = os.getenv("PROXY_WALLET", "").strip()
+        client = get_clob_client()
+        if client is None:
+            log.warning("No CLOB client — cannot fetch balance")
+            return -1
 
-        if not proxy_addr:
-            # Derive proxy wallet from EOA using Polymarket's CREATE2 formula
-            try:
-                from eth_account import Account
-                from eth_utils import keccak
-                eoa = Account.from_key(POLYGON_PRIVATE_KEY).address.lower()
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
 
-                # Polymarket proxy factory constants (Polygon mainnet)
-                PROXY_FACTORY = "0xaB45c5A4B0c941a2F231C04C3f49182e1A254052"
-                PROXY_INIT_CODE_HASH = bytes.fromhex(
-                    "aacab66c1ab6b910b6b9d3ca3c2c75963e5ec2e4bf6fe0e1068a3bfb18e16e56"
-                )
+        result = client.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        )
+        log.info(f"CLOB balance raw response: {result}")
 
-                # salt = keccak256(abi.encodePacked(eoa))
-                eoa_bytes = bytes.fromhex(eoa.replace("0x", ""))
-                salt = keccak(eoa_bytes)
+        # result may be dict or have balance as string
+        raw_balance = result.get("balance", 0) if isinstance(result, dict) else 0
+        raw_balance = float(raw_balance)
 
-                # CREATE2: keccak256(0xff ++ factory ++ salt ++ initCodeHash)[12:]
-                factory_bytes = bytes.fromhex(PROXY_FACTORY.replace("0x", "").lower())
-                pre = b'\xff' + factory_bytes + salt + PROXY_INIT_CODE_HASH
-                proxy_addr = "0x" + keccak(pre).hex()[24:]
-                log.info(f"Derived proxy wallet: {proxy_addr}")
-            except Exception as e:
-                log.warning(f"Proxy derivation failed: {e}")
-                # Fallback: query EOA directly
-                from eth_account import Account
-                proxy_addr = Account.from_key(POLYGON_PRIVATE_KEY).address.lower()
+        # Check if already in USD or needs decimal conversion
+        if raw_balance > 1_000_000:
+            # Looks like raw units (6 decimals for USDC)
+            balance = raw_balance / (10 ** USDC_DECIMALS)
+        else:
+            # Already in USD
+            balance = raw_balance
 
-        address = proxy_addr.lower()
-        padded = address.replace("0x", "").zfill(64)
-        data = BALANCE_OF_SELECTOR + padded
-
-        payload = {
-            "jsonrpc": "2.0",
-            "method": "eth_call",
-            "params": [
-                {"to": USDC_ADDRESS, "data": data},
-                "latest",
-            ],
-            "id": 1,
-        }
-
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(POLYGON_RPC, json=payload)
-            result = r.json().get("result", "0x0")
-            raw = int(result, 16)
-            balance = raw / (10 ** USDC_DECIMALS)
-            log.info(f"Wallet balance: ${balance:.2f} USDC ({address[:10]}...)")
-            return balance
+        log.info(f"Wallet balance: ${balance:.2f} USDC")
+        return balance
 
     except Exception as e:
-        log.warning(f"Balance fetch failed: {e}")
+        log.warning(f"CLOB balance fetch failed: {e}")
         return -1
 
 

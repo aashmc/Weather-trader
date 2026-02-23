@@ -837,8 +837,14 @@ async def run_cycle():
             f"Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f} | "
             f"Kill: ${config.DAILY_LOSS_LIMIT:.2f}"
         )
+    elif balance == 0:
+        update_bankroll(0)
+        log.warning("Wallet balance is $0 — no trades this cycle")
     else:
-        log.warning(f"Balance fetch failed — using ${config.BANKROLL:.2f} from last cycle")
+        log.warning("Balance fetch failed — skipping trades this cycle (bankroll $0)")
+        if config.BANKROLL <= 0:
+            # Don't trade on stale/missing data
+            return
 
     dates = get_market_dates()
     city_summaries = []
@@ -903,7 +909,11 @@ async def main():
     balance = await fetch_wallet_balance()
     if balance > 0:
         update_bankroll(balance)
-    bankroll_str = f"${config.BANKROLL:.2f}"
+        bankroll_str = f"${config.BANKROLL:.2f}"
+    elif balance == 0:
+        bankroll_str = "⚠️ $0.00 (empty wallet)"
+    else:
+        bankroll_str = "⚠️ FETCH FAILED (no trades until resolved)"
 
     log.info(f"  Mode: {mode}")
     log.info(f"  Bankroll: {bankroll_str} | Kelly: ⅓ | Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f}")

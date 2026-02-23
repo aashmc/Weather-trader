@@ -375,7 +375,7 @@ async def place_limit_order(
 
         options = PartialCreateOrderOptions(
             tick_size="0.01",
-            neg_risk=False,
+            neg_risk=True,
         )
 
         order = client.create_and_post_order(order_args, options)

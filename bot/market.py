@@ -306,39 +306,45 @@ def get_clob_client():
 
 async def fetch_wallet_balance() -> float:
     """
-    Fetch available USDC balance via Polymarket CLOB API.
-    Returns balance in USD (float), or -1 on failure.
+    Fetch available cash balance via Polymarket accounting snapshot API.
+    Returns cashBalance in USD (float), or -1 on failure.
     """
+    import os, zipfile, io, csv
+
+    proxy_wallet = os.getenv("PROXY_WALLET", "")
+    if not proxy_wallet:
+        log.warning("No PROXY_WALLET configured — cannot fetch balance")
+        return -1
+
     try:
-        client = get_clob_client()
-        if client is None:
-            log.warning("No CLOB client — cannot fetch balance")
+        async with httpx.AsyncClient(timeout=30) as client:
+            url = f"https://data-api.polymarket.com/v1/accounting/snapshot?user={proxy_wallet}"
+            resp = await client.get(url)
+            resp.raise_for_status()
+
+        z = zipfile.ZipFile(io.BytesIO(resp.content))
+        equity_csv = z.read("equity.csv").decode("utf-8").strip()
+        reader = csv.DictReader(io.StringIO(equity_csv))
+        row = next(reader, None)
+
+        if row is None:
+            log.warning("Accounting snapshot: equity.csv is empty")
             return -1
 
-        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        cash = float(row.get("cashBalance", 0))
+        positions_val = float(row.get("positionsValue", 0))
+        equity = float(row.get("equity", 0))
+        snap_time = row.get("valuationTime", "?")
 
-        result = client.get_balance_allowance(
-            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        log.info(
+            f"Wallet balance: ${cash:.2f} cash, "
+            f"${positions_val:.2f} positions, "
+            f"${equity:.2f} equity (snapshot {snap_time})"
         )
-        log.info(f"CLOB balance raw response: {result}")
-
-        # result may be dict or have balance as string
-        raw_balance = result.get("balance", 0) if isinstance(result, dict) else 0
-        raw_balance = float(raw_balance)
-
-        # Check if already in USD or needs decimal conversion
-        if raw_balance > 1_000_000:
-            # Looks like raw units (6 decimals for USDC)
-            balance = raw_balance / (10 ** USDC_DECIMALS)
-        else:
-            # Already in USD
-            balance = raw_balance
-
-        log.info(f"Wallet balance: ${balance:.2f} USDC")
-        return balance
+        return cash
 
     except Exception as e:
-        log.warning(f"CLOB balance fetch failed: {e}")
+        log.warning(f"Accounting snapshot fetch failed: {e}")
         return -1
 
 

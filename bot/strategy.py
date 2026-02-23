@@ -296,6 +296,13 @@ def analyze_brackets(
             kelly_bet = min(kelly_bet, config.MAX_BET_PER_BRACKET)
             kelly_bet = min(kelly_bet, max(0, remaining_budget))
 
+            # Enforce Polymarket minimum order size
+            if 0 < kelly_bet < config.MIN_ORDER_SIZE:
+                if remaining_budget >= config.MIN_ORDER_SIZE:
+                    kelly_bet = config.MIN_ORDER_SIZE
+                else:
+                    kelly_bet = 0  # Can't meet minimum
+
             if kelly_bet > 0 and ask > 0:
                 contracts = int(kelly_bet / ask)
                 expected_profit = round(kelly_bet * (cor_p / ask - 1), 2)
@@ -321,7 +328,7 @@ def analyze_brackets(
         if label in existing_positions:
             filter_reasons.append("already holding")
         if kelly_bet <= 0:
-            filter_reasons.append("kelly ≤ 0")
+            filter_reasons.append("kelly ≤ 0" if kelly_full <= 0 else f"below ${config.MIN_ORDER_SIZE:.0f} min")
         if remaining_budget <= 0:
             filter_reasons.append("max exposure")
 

@@ -86,6 +86,7 @@ def set_mode(mode: str | None = None, paused: bool | None = None):
 # PENDING SIGNALS — queue for manual approval
 # ══════════════════════════════════════════════════════
 PENDING_FILE = Path("pending_signals.json")
+PENDING_META_FILE = Path("pending_meta.json")
 
 
 def load_pending() -> list[dict]:
@@ -101,13 +102,42 @@ def save_pending(signals: list[dict]):
     PENDING_FILE.write_text(json.dumps(signals, indent=2, default=str))
 
 
+def _load_pending_meta() -> dict:
+    if PENDING_META_FILE.exists():
+        try:
+            data = json.loads(PENDING_META_FILE.read_text())
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {"next_pending_id": 1}
+
+
+def _save_pending_meta(meta: dict):
+    PENDING_META_FILE.write_text(json.dumps(meta, indent=2, default=str))
+
+
+def _allocate_pending_id(pending: list[dict]) -> int:
+    """
+    Allocate a monotonic pending ID so old Telegram buttons can never map
+    to newly queued signals.
+    """
+    meta = _load_pending_meta()
+    next_from_meta = int(meta.get("next_pending_id", 1))
+    max_existing = max((int(s.get("pending_id", 0) or 0) for s in pending), default=0)
+    pid = max(next_from_meta, max_existing + 1)
+    meta["next_pending_id"] = pid + 1
+    _save_pending_meta(meta)
+    return pid
+
+
 def clear_pending():
     save_pending([])
 
 
 def add_pending(sig: dict):
     pending = load_pending()
-    sig["pending_id"] = len(pending) + 1
+    sig["pending_id"] = _allocate_pending_id(pending)
     pending.append(sig)
     save_pending(pending)
 
@@ -344,15 +374,16 @@ async def execute_pending_signal(sig_id: int):
         )
 
         log.info(f"✅ Manual order: {sig['bracket']} @ {sig['ask']:.3f} x{sig['contracts']}")
+        # Remove from pending only after successful placement.
+        pending = [s for s in pending if s.get("pending_id") != sig_id]
+        save_pending(pending)
     else:
         await send_telegram(
             f"❌ <b>ORDER FAILED: #{sig_id}</b>\n"
-            f"  {sig['bracket']} — {order_result['error']}"
+            f"  {sig['city']} {sig['date']} — {sig['bracket']}\n"
+            f"  {order_result['error']}\n"
+            f"  (Signal kept pending. You can retry /buy_{sig_id} after fixing config, or /skip_{sig_id})"
         )
-
-    # Remove from pending
-    pending = [s for s in pending if s.get("pending_id") != sig_id]
-    save_pending(pending)
 
 # ══════════════════════════════════════════════════════
 # LOGGING SETUP

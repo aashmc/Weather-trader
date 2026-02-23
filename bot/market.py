@@ -330,8 +330,8 @@ def _fallback_signature_types(primary: int, proxy_wallet: str) -> list[int]:
             except ValueError:
                 continue
     elif proxy_wallet:
-        # Common migration path: proxy wallets sometimes require sig_type=2.
-        vals = [2, 1]
+        # Try proxy variants first, then EOA mode for diagnostics.
+        vals = [2, 1, 0]
     else:
         vals = [0]
 
@@ -368,8 +368,10 @@ def _init_clob_client(signature_type: int | None = None):
         "chain_id": CHAIN_ID,
         "signature_type": sig_type,
     }
-    if proxy_wallet:
+    if proxy_wallet and sig_type in (1, 2):
         kwargs["funder"] = proxy_wallet
+    elif proxy_wallet and sig_type == 0:
+        log.info("signature_type=0 selected; ignoring PROXY_WALLET and using signer as maker")
 
     client = ClobClient(**kwargs)
 
@@ -521,6 +523,7 @@ async def place_limit_order(
             option_variants = [("neg_risk=true", options), ("auto_neg_risk", None)]
             tried = {(primary_sig, "neg_risk=true")}
             last_err = e
+            failures = []
 
             for sig_type in sig_candidates:
                 try:
@@ -551,14 +554,46 @@ async def place_limit_order(
                             return {"order_id": order_id, "success": True, "error": None}
                         except Exception as e2:
                             last_err = e2
+                            failures.append(
+                                {
+                                    "sig_type": sig_type,
+                                    "option": option_name,
+                                    "error": str(e2),
+                                }
+                            )
                             log.warning(
                                 f"Fallback failed (sig_type={sig_type}, {option_name}): {e2}"
                             )
                 except Exception as e2:
                     last_err = e2
+                    failures.append(
+                        {
+                            "sig_type": sig_type,
+                            "option": "client_init",
+                            "error": str(e2),
+                        }
+                    )
                     log.warning(f"Fallback client init failed (sig_type={sig_type}): {e2}")
 
-            e = last_err
+            if proxy_wallet:
+                has_proxy_sig_invalid = any(
+                    f["sig_type"] in (1, 2) and _is_signature_error(f["error"])
+                    for f in failures
+                )
+                has_sig0_balance_error = any(
+                    f["sig_type"] == 0 and "not enough balance / allowance" in f["error"].lower()
+                    for f in failures
+                )
+                if has_proxy_sig_invalid and has_sig0_balance_error:
+                    e = RuntimeError(
+                        "Signature mismatch between POLYGON_PRIVATE_KEY and PROXY_WALLET: "
+                        "proxy orders fail signature check, while signer-only mode has no balance. "
+                        "Use the private key that controls this proxy wallet in Polymarket."
+                    )
+                else:
+                    e = last_err
+            else:
+                e = last_err
 
         log.error(f"Order failed for {bracket_label}: {e}")
         return {"order_id": None, "success": False, "error": str(e)}

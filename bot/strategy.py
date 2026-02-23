@@ -245,6 +245,7 @@ def analyze_brackets(
     # ── Step 3: Get candidate brackets (favorite ±1) ──
     candidates = get_candidate_brackets(brackets, fav_idx)
     candidate_labels = {c["label"] for c in candidates}
+    result["candidates"] = candidates
     log.info(f"  Candidates: {[c['label'] for c in candidates]}")
 
     # ── Step 4 + 6: Analyze each candidate ──

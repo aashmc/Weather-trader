@@ -439,6 +439,23 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
         mature, maturity_reason = analysis["maturity"]
         if not mature:
             log.info(f"  ⏳ Market immature: {maturity_reason}")
+            # Still log the cycle data for recalibration
+            await log_cycle(
+                city=city_name, date_str=date_str,
+                ensemble_mean=ensemble["mean"], ensemble_count=ensemble["count"],
+                metar_high=metar["day_high_market"], metar_current=metar["current_temp_c"],
+                metar_obs_count=metar["observation_count"],
+                brackets_data=[], signals=[], trades_placed=[],
+                raw_dist=ensemble["raw_dist"], corrected_dist=corrected_dist,
+                model_votes=ensemble["model_votes"], market_prices=prices,
+                books_snapshot=books, max_temps=ensemble["max_temps"],
+                bias_mean=city["bias_mean"], bias_sd=city["bias_sd"],
+                current_exposure=exposure, daily_pnl=get_daily_pnl(),
+                v5_favorite=None, v5_concentration=0, v5_kelly_multiplier=0,
+                v5_maturity={"mature": False, "reason": maturity_reason},
+                v5_divergence={"diverged": False, "distance": 0, "model_top": "", "market_fav": ""},
+                v5_candidates=[],
+            )
             result["status"] = f"immature:{maturity_reason}"
             return result
 
@@ -451,6 +468,24 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                 f"  Market fav: {market_fav}\n"
                 f"  Distance: {div_dist} brackets\n"
                 f"  → Skipping (model & market disagree)"
+            )
+            # Still log for recalibration
+            await log_cycle(
+                city=city_name, date_str=date_str,
+                ensemble_mean=ensemble["mean"], ensemble_count=ensemble["count"],
+                metar_high=metar["day_high_market"], metar_current=metar["current_temp_c"],
+                metar_obs_count=metar["observation_count"],
+                brackets_data=analysis.get("signals", []), signals=[], trades_placed=[],
+                raw_dist=ensemble["raw_dist"], corrected_dist=corrected_dist,
+                model_votes=ensemble["model_votes"], market_prices=prices,
+                books_snapshot=books, max_temps=ensemble["max_temps"],
+                bias_mean=city["bias_mean"], bias_sd=city["bias_sd"],
+                current_exposure=exposure, daily_pnl=get_daily_pnl(),
+                v5_favorite=analysis.get("favorite"), v5_concentration=analysis.get("concentration", 0),
+                v5_kelly_multiplier=analysis.get("kelly_multiplier", 0),
+                v5_maturity={"mature": True, "reason": ""},
+                v5_divergence={"diverged": True, "distance": div_dist, "model_top": model_top, "market_fav": market_fav},
+                v5_candidates=[c["label"] for c in analysis.get("candidates", [])],
             )
             result["status"] = f"divergence:{div_dist}"
             return result
@@ -639,6 +674,12 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
             bias_sd=city["bias_sd"],
             current_exposure=exposure,
             daily_pnl=get_daily_pnl(),
+            v5_favorite=analysis.get("favorite"),
+            v5_concentration=analysis.get("concentration", 0),
+            v5_kelly_multiplier=analysis.get("kelly_multiplier", 0),
+            v5_maturity={"mature": analysis.get("maturity", (True, ""))[0], "reason": analysis.get("maturity", (True, ""))[1]},
+            v5_divergence={"diverged": analysis.get("divergence", (False, 0, "", ""))[0], "distance": analysis.get("divergence", (False, 0, "", ""))[1], "model_top": analysis.get("divergence", (False, 0, "", ""))[2], "market_fav": analysis.get("favorite", "")},
+            v5_candidates=[c["label"] for c in analysis.get("candidates", [])],
         )
 
         result["status"] = "ok"

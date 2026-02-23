@@ -41,6 +41,13 @@ async def log_cycle(
     bias_sd: float = 0,
     current_exposure: float = 0,
     daily_pnl: float = 0,
+    # v5 filter metadata
+    v5_favorite: str = None,
+    v5_concentration: float = 0,
+    v5_kelly_multiplier: float = 0,
+    v5_maturity: dict = None,
+    v5_divergence: dict = None,
+    v5_candidates: list = None,
 ):
     """Log a complete cycle — both summary (Sheets) and full snapshot (local)."""
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -62,6 +69,14 @@ async def log_cycle(
         "daily_pnl": round(daily_pnl, 2),
         "gas_cost_usd": round(gas_cost, 5),
         "pol_price_usd": round(pol_price, 4),
+        "v5_favorite": v5_favorite or "",
+        "v5_concentration": round(v5_concentration * 100, 1),
+        "v5_kelly_mult": round(v5_kelly_multiplier, 2),
+        "v5_mature": v5_maturity.get("mature", True) if v5_maturity else True,
+        "v5_mature_reason": v5_maturity.get("reason", "") if v5_maturity else "",
+        "v5_diverged": v5_divergence.get("diverged", False) if v5_divergence else False,
+        "v5_diverge_dist": v5_divergence.get("distance", 0) if v5_divergence else 0,
+        "v5_candidates": ",".join(v5_candidates or []),
     }
 
     # Per-bracket data (all 9)
@@ -105,6 +120,14 @@ async def log_cycle(
         "config_at_time": {
             "bias_mean": bias_mean,
             "bias_sd": bias_sd,
+        },
+        "v5_filters": {
+            "favorite": v5_favorite,
+            "concentration": round(v5_concentration, 4),
+            "kelly_multiplier": round(v5_kelly_multiplier, 2),
+            "maturity": v5_maturity or {},
+            "divergence": v5_divergence or {},
+            "candidates": v5_candidates or [],
         },
         "ensemble": {
             "mean": round(ensemble_mean, 3),

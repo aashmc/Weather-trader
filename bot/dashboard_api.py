@@ -9,6 +9,7 @@ import json
 import logging
 import mimetypes
 import os
+import subprocess
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,6 +38,7 @@ CONTROL_FILE = Path("control.json")
 PENDING_FILE = Path("pending_signals.json")
 WEB_ROOT = Path(__file__).resolve().parent.parent
 BOT_LOG_FILE = WEB_ROOT / "bot.log"
+BOT_SERVICE_NAME = os.getenv("WEATHER_BOT_SERVICE", "weather-trader.service").strip()
 
 
 def _load_json(path: Path, fallback):
@@ -315,6 +317,55 @@ def _tail_file_lines(path: Path, n: int) -> list[str]:
         return []
 
 
+def _file_is_recent(path: Path, max_age_seconds: int = 180) -> bool:
+    try:
+        mtime = path.stat().st_mtime
+        age = datetime.now(timezone.utc).timestamp() - float(mtime)
+        return age <= max_age_seconds
+    except Exception:
+        return False
+
+
+def _tail_journal_lines(unit_name: str, n: int) -> list[str]:
+    if not unit_name:
+        return []
+    try:
+        result = subprocess.run(
+            [
+                "journalctl",
+                "-u",
+                unit_name,
+                "-n",
+                str(max(1, n)),
+                "--no-pager",
+                "--output=short-iso",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=4,
+            check=False,
+        )
+        if result.returncode != 0:
+            return []
+        return [line for line in result.stdout.splitlines() if line.strip()]
+    except Exception:
+        return []
+
+
+def _get_live_bot_logs(n: int) -> tuple[str, list[str]]:
+    # Prefer file logs when they are fresh; otherwise fall back to systemd journal.
+    if _file_is_recent(BOT_LOG_FILE, max_age_seconds=180):
+        return str(BOT_LOG_FILE), _tail_file_lines(BOT_LOG_FILE, n)
+
+    journal_lines = _tail_journal_lines(BOT_SERVICE_NAME, n)
+    if journal_lines:
+        return f"journalctl:{BOT_SERVICE_NAME}", journal_lines
+
+    # Last fallback: stale file tail (if present) so UI still shows context.
+    return str(BOT_LOG_FILE), _tail_file_lines(BOT_LOG_FILE, n)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "WeatherDashboardAPI/1.0"
 
@@ -404,13 +455,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 n = 120
             n = max(20, min(n, 500))
+            source, lines = _get_live_bot_logs(n)
             return self._json(
                 200,
                 {
                     "ok": True,
                     "data": {
-                        "source": str(BOT_LOG_FILE),
-                        "lines": _tail_file_lines(BOT_LOG_FILE, n),
+                        "source": source,
+                        "lines": lines,
                     },
                 },
             )

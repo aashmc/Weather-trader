@@ -6,6 +6,7 @@ Provides read/write endpoints for live dashboard state and bot controls.
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +29,7 @@ API_TOKEN = os.getenv("DASHBOARD_API_TOKEN", "").strip()
 
 CONTROL_FILE = Path("control.json")
 PENDING_FILE = Path("pending_signals.json")
+WEB_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _load_json(path: Path, fallback):
@@ -116,9 +118,9 @@ def build_summary() -> dict:
 class Handler(BaseHTTPRequestHandler):
     server_version = "WeatherDashboardAPI/1.0"
 
-    def _set_headers(self, code=200):
+    def _set_headers(self, code=200, content_type="application/json; charset=utf-8"):
         self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Key")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -145,14 +147,34 @@ class Handler(BaseHTTPRequestHandler):
             return True
         return self.headers.get("X-API-Key", "").strip() == API_TOKEN
 
+    def _serve_file(self, rel_path: str):
+        path = (WEB_ROOT / rel_path).resolve()
+        if not str(path).startswith(str(WEB_ROOT)):
+            self._set_headers(403, "text/plain; charset=utf-8")
+            self.wfile.write(b"forbidden")
+            return
+        if not path.exists() or not path.is_file():
+            self._set_headers(404, "text/plain; charset=utf-8")
+            self.wfile.write(b"not found")
+            return
+        ctype, _ = mimetypes.guess_type(str(path))
+        self._set_headers(200, ctype or "application/octet-stream")
+        self.wfile.write(path.read_bytes())
+
     def do_OPTIONS(self):
         self._set_headers(204)
 
     def do_GET(self):
+        path = urlparse(self.path).path
+
+        # Serve dashboard static page from the same service/origin.
+        # This avoids cross-origin/API-base issues for users.
+        if path in ("/", "/index.html"):
+            return self._serve_file("index.html")
+
         if not self._authorized():
             return self._json(401, {"ok": False, "error": "unauthorized"})
 
-        path = urlparse(self.path).path
         if path == "/api/health":
             return self._json(200, {"ok": True, "ts": datetime.now(timezone.utc).isoformat()})
         if path == "/api/summary":

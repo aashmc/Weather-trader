@@ -177,7 +177,10 @@ def get_candidate_brackets(brackets: list[dict], fav_idx: int) -> list[dict]:
 # STEP 5: CONCENTRATION CHECK
 # ══════════════════════════════════════════════════════
 
-def compute_concentration(corrected_probs: dict[str, float]) -> tuple[float, float]:
+def compute_concentration(
+    corrected_probs: dict[str, float],
+    min_concentration: float = CONCENTRATION_MIN,
+) -> tuple[float, float]:
     """
     Compute top-2 concentration and Kelly multiplier.
     Returns (concentration, kelly_multiplier).
@@ -185,7 +188,7 @@ def compute_concentration(corrected_probs: dict[str, float]) -> tuple[float, flo
     sorted_probs = sorted(corrected_probs.values(), reverse=True)
     top2 = sum(sorted_probs[:2]) if len(sorted_probs) >= 2 else sum(sorted_probs)
 
-    if top2 < CONCENTRATION_MIN:
+    if top2 < min_concentration:
         return top2, 0.0
 
     kelly_mult = 0.0
@@ -390,12 +393,21 @@ def analyze_brackets(
     log.info(f"  Market favorite: {fav_label} (idx {fav_idx})")
 
     # ── Step 5: Concentration check ──
-    concentration, kelly_mult = compute_concentration(corrected_probs)
+    min_concentration = float(city_config.get("min_concentration", CONCENTRATION_MIN))
+    concentration, kelly_mult = compute_concentration(
+        corrected_probs,
+        min_concentration=min_concentration,
+    )
     result["concentration"] = concentration
     result["kelly_multiplier"] = kelly_mult
+    result["min_concentration"] = min_concentration
 
     if kelly_mult <= 0:
-        log.info(f"  Concentration too low: {concentration*100:.1f}% (need ≥{CONCENTRATION_MIN*100:.0f}%)")
+        log.info(
+            "  Concentration too low: %.1f%% (need ≥%.0f%%)",
+            concentration * 100,
+            min_concentration * 100,
+        )
         return result
 
     log.info(f"  Concentration: {concentration*100:.1f}% → Kelly mult {kelly_mult:.2f}x")

@@ -180,6 +180,7 @@ CITIES = {
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 3,    # 3/5 models must agree
         "min_edge": 0.05,   # 5pt minimum edge
+        "min_concentration": 0.50,  # top-2 mass must be >= 50%
         # Spread policy: keep strict for London by default.
         "fav_soft_spread": 0.03,
         "fav_relaxed_spread": 0.03,
@@ -205,6 +206,7 @@ CITIES = {
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 3,    # 3/4 models must agree
         "min_edge": 0.05,
+        "min_concentration": 0.50,  # top-2 mass must be >= 50%
         # Seoul: allow favorite entries in moderate spreads if edge/depth are strong.
         "fav_soft_spread": 0.03,
         "fav_relaxed_spread": 0.08,
@@ -229,6 +231,7 @@ CITIES = {
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 2,    # 2/2 — both must agree
         "min_edge": 0.08,   # 8pt higher threshold
+        "min_concentration": 0.45,  # lower than EU/Seoul: US brackets are often flatter
         "fav_soft_spread": 0.03,
         "fav_relaxed_spread": 0.03,
         "fav_relaxed_min_edge": 0.08,
@@ -253,6 +256,7 @@ CITIES = {
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 2,    # 2/3 models must agree
         "min_edge": 0.05,
+        "min_concentration": 0.45,  # lower than EU/Seoul: US brackets are often flatter
         "fav_soft_spread": 0.03,
         "fav_relaxed_spread": 0.03,
         "fav_relaxed_min_edge": 0.05,
@@ -315,6 +319,7 @@ _BASE_CITY_THRESHOLDS = {
         "min_models": cfg.get("min_models"),
         "min_edge": cfg.get("min_edge"),
         "min_families": cfg.get("min_families"),
+        "min_concentration": cfg.get("min_concentration", CONCENTRATION_MIN),
     }
     for city_key, cfg in CITIES.items()
 }
@@ -361,6 +366,10 @@ def _apply_defaults():
         city_cfg["min_models"] = base["min_models"]
         city_cfg["min_edge"] = base["min_edge"]
         city_cfg["min_families"] = min(base["min_families"], city_cfg["total_families"])
+        city_cfg["min_concentration"] = max(
+            0.0,
+            min(1.0, _safe_float(base.get("min_concentration"), CONCENTRATION_MIN)),
+        )
 
 
 def _apply_overrides(payload: dict):
@@ -395,6 +404,11 @@ def _apply_overrides(payload: dict):
                 city_cfg["min_edge"] = max(0.0, min(0.5, _safe_float(ov.get("min_edge"), city_cfg["min_edge"])))
             if "min_families" in ov:
                 city_cfg["min_families"] = max(1, _safe_int(ov.get("min_families"), city_cfg["min_families"]))
+            if "min_concentration" in ov:
+                city_cfg["min_concentration"] = max(
+                    0.0,
+                    min(1.0, _safe_float(ov.get("min_concentration"), city_cfg["min_concentration"])),
+                )
 
             city_cfg["min_families"] = min(city_cfg["min_families"], city_cfg["total_families"])
             city_cfg["min_models"] = min(city_cfg["min_models"], city_cfg["total_models"])
@@ -451,6 +465,7 @@ def get_runtime_effective() -> dict:
                 "min_models": cfg.get("min_models"),
                 "min_edge": cfg.get("min_edge"),
                 "min_families": cfg.get("min_families"),
+                "min_concentration": cfg.get("min_concentration"),
             }
             for city_key, cfg in CITIES.items()
         },

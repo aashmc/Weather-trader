@@ -15,7 +15,7 @@ import config
 from config import (
     KELLY_FRACTION, KELLY_CAP,
     MIN_ASK_DEPTH, MAX_ASK_PRICE,
-    MATURITY_MIN_FAV_PRICE, MATURITY_MAX_FAV_SPREAD, MATURITY_MIN_LIQUID_BRACKETS,
+    MATURITY_MIN_FAV_PRICE, MATURITY_MAX_FAV_SPREAD, MATURITY_HARD_MAX_FAV_SPREAD, MATURITY_MIN_LIQUID_BRACKETS,
     CONCENTRATION_MIN, CONCENTRATION_TIERS,
     MAX_DIVERGENCE_BRACKETS,
 )
@@ -91,7 +91,7 @@ def _estimate_execution(book: dict | None, ask: float, contracts: int) -> dict:
 # STEP 1: MARKET MATURITY CHECK
 # ══════════════════════════════════════════════════════
 
-def check_market_maturity(brackets: list[dict], books: dict) -> tuple[bool, str]:
+def check_market_maturity(brackets: list[dict], books: dict, city_config: dict | None = None) -> tuple[bool, str]:
     """
     Check if the market is mature enough to trade.
     Returns (mature, reason).
@@ -108,11 +108,14 @@ def check_market_maturity(brackets: list[dict], books: dict) -> tuple[bool, str]
     if max_ask < MATURITY_MIN_FAV_PRICE:
         return False, f"no bracket ≥{MATURITY_MIN_FAV_PRICE*100:.0f}¢ (max={max_ask*100:.1f}¢)"
 
-    # Check 2: Favorite bracket spread ≤ 3¢
+    # Check 2: Favorite bracket hard spread cap (absolute no-trade).
+    hard_cap = MATURITY_HARD_MAX_FAV_SPREAD
+    if city_config:
+        hard_cap = float(city_config.get("maturity_hard_spread", hard_cap))
     fav_label = max(books, key=lambda k: books[k]["ba"] if books[k] else 0)
     fav_book = books[fav_label]
-    if fav_book and fav_book.get("spread", 1) > MATURITY_MAX_FAV_SPREAD:
-        return False, f"favorite spread {fav_book['spread']*100:.1f}¢ > {MATURITY_MAX_FAV_SPREAD*100:.0f}¢"
+    if fav_book and fav_book.get("spread", 1) > hard_cap:
+        return False, f"favorite spread {fav_book['spread']*100:.1f}¢ > hard cap {hard_cap*100:.0f}¢"
 
     # Check 3: At least 3 brackets with ask depth ≥ 10
     liquid_count = sum(
@@ -291,7 +294,7 @@ def analyze_brackets(
     }
 
     # ── Step 1: Market maturity ──
-    mature, maturity_reason = check_market_maturity(brackets, books)
+    mature, maturity_reason = check_market_maturity(brackets, books, city_config)
     result["maturity"] = (mature, maturity_reason)
     if not mature:
         log.info(f"  Market immature: {maturity_reason}")
@@ -363,6 +366,10 @@ def analyze_brackets(
     min_models = city_config.get("min_models", 2)
     min_families = city_config.get("min_families", min_models)
     min_edge = city_config.get("min_edge", 0.05)
+    fav_soft_spread = float(city_config.get("fav_soft_spread", MATURITY_MAX_FAV_SPREAD))
+    fav_relaxed_spread = float(city_config.get("fav_relaxed_spread", fav_soft_spread))
+    fav_relaxed_min_edge = float(city_config.get("fav_relaxed_min_edge", min_edge))
+    fav_relaxed_min_depth = float(city_config.get("fav_relaxed_min_depth", MIN_ASK_DEPTH))
     remaining_budget = config.MAX_TOTAL_EXPOSURE - current_exposure
     total_families = max(1, total_families)
 
@@ -495,6 +502,22 @@ def analyze_brackets(
             filter_reasons.append(
                 f"ask {ask*100:.0f}¢ > {MAX_ASK_PRICE*100:.0f}¢"
             )
+        if label == fav_label:
+            if spread > fav_relaxed_spread:
+                filter_reasons.append(
+                    f"favorite spread {spread*100:.1f}¢ > {fav_relaxed_spread*100:.0f}¢"
+                )
+            elif spread > fav_soft_spread:
+                if true_edge < fav_relaxed_min_edge or ask_depth < fav_relaxed_min_depth:
+                    filter_reasons.append(
+                        "favorite wide spread requires "
+                        f"edge≥{fav_relaxed_min_edge*100:.0f}pt and depth≥{fav_relaxed_min_depth:.0f}"
+                    )
+        else:
+            if spread > fav_soft_spread:
+                filter_reasons.append(
+                    f"spread {spread*100:.1f}¢ > {fav_soft_spread*100:.0f}¢ (non-favorite)"
+                )
         if label in existing_positions:
             filter_reasons.append("already holding")
         if kelly_bet <= 0:

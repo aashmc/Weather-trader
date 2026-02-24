@@ -67,6 +67,7 @@ TELEGRAM_POLL_SECONDS = 60     # Fast polling for button presses
 # ══════════════════════════════════════════════════════
 MATURITY_MIN_FAV_PRICE = 0.25  # At least one bracket must be ≥25¢
 MATURITY_MAX_FAV_SPREAD = 0.03 # Favorite spread must be ≤3¢
+MATURITY_HARD_MAX_FAV_SPREAD = 0.12  # Absolute no-trade if favorite spread exceeds 12¢
 MATURITY_MIN_LIQUID_BRACKETS = 3  # At least 3 brackets with depth ≥10
 
 # ══════════════════════════════════════════════════════
@@ -179,6 +180,11 @@ CITIES = {
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 3,    # 3/5 models must agree
         "min_edge": 0.05,   # 5pt minimum edge
+        # Spread policy: keep strict for London by default.
+        "fav_soft_spread": 0.03,
+        "fav_relaxed_spread": 0.03,
+        "fav_relaxed_min_edge": 0.05,
+        "fav_relaxed_min_depth": 20,
     },
     "seoul": {
         "name": "Seoul",
@@ -199,6 +205,11 @@ CITIES = {
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 3,    # 3/4 models must agree
         "min_edge": 0.05,
+        # Seoul: allow favorite entries in moderate spreads if edge/depth are strong.
+        "fav_soft_spread": 0.03,
+        "fav_relaxed_spread": 0.08,
+        "fav_relaxed_min_edge": 0.08,
+        "fav_relaxed_min_depth": 30,
     },
     "nyc": {
         "name": "NYC",
@@ -218,6 +229,10 @@ CITIES = {
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 2,    # 2/2 — both must agree
         "min_edge": 0.08,   # 8pt higher threshold
+        "fav_soft_spread": 0.03,
+        "fav_relaxed_spread": 0.03,
+        "fav_relaxed_min_edge": 0.08,
+        "fav_relaxed_min_depth": 20,
     },
     "seattle": {
         "name": "Seattle",
@@ -238,6 +253,10 @@ CITIES = {
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 2,    # 2/3 models must agree
         "min_edge": 0.05,
+        "fav_soft_spread": 0.03,
+        "fav_relaxed_spread": 0.03,
+        "fav_relaxed_min_edge": 0.05,
+        "fav_relaxed_min_depth": 20,
     },
 }
 

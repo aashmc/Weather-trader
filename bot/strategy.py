@@ -197,6 +197,11 @@ def compute_concentration(
             kelly_mult = mult
             break
 
+    # If city min concentration is below the lowest global tier (e.g. 45%),
+    # keep a conservative floor Kelly instead of creating a dead-zone.
+    if kelly_mult <= 0 and top2 >= min_concentration:
+        kelly_mult = CONCENTRATION_TIERS[-1][1] if CONCENTRATION_TIERS else 0.5
+
     # Cap at KELLY_CAP
     kelly_mult = min(kelly_mult, KELLY_CAP)
     return top2, kelly_mult

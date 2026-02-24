@@ -766,7 +766,16 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                     f"{best['bracket']} edge={best['true_edge']*100:.1f}pt [{reasons}]"
                 )
             else:
-                log.info(f"{city_name}: No candidates after favorite ±1 filter")
+                conc = analysis.get("concentration", 0.0)
+                min_conc = analysis.get("min_concentration", config.CONCENTRATION_MIN)
+                km = analysis.get("kelly_multiplier", 0.0)
+                if km <= 0 and conc > 0:
+                    log.info(
+                        f"{city_name}: No signals — concentration {conc*100:.1f}% "
+                        f"(need ≥{min_conc*100:.0f}%)"
+                    )
+                else:
+                    log.info(f"{city_name}: No candidates after favorite ±1 filter")
 
         # 8. Log cycle — comprehensive data for recalibration
         await log_cycle(

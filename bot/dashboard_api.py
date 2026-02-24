@@ -91,6 +91,8 @@ def build_summary() -> dict:
     portfolio = get_portfolio_summary()
     active, active_by_market = _active_positions_payload()
     cash = _fetch_cash_balance_sync()
+    if cash >= 0:
+        config.update_bankroll(cash)
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "control": {

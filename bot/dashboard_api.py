@@ -407,22 +407,49 @@ class Handler(BaseHTTPRequestHandler):
             return True
         return self.headers.get("X-API-Key", "").strip() == API_TOKEN
 
-    def _serve_file(self, rel_path: str):
+    def _serve_file(self, rel_path: str, head_only: bool = False):
         path = (WEB_ROOT / rel_path).resolve()
         if not str(path).startswith(str(WEB_ROOT)):
             self._set_headers(403, "text/plain; charset=utf-8")
-            self.wfile.write(b"forbidden")
+            if not head_only:
+                self.wfile.write(b"forbidden")
             return
         if not path.exists() or not path.is_file():
             self._set_headers(404, "text/plain; charset=utf-8")
-            self.wfile.write(b"not found")
+            if not head_only:
+                self.wfile.write(b"not found")
             return
         ctype, _ = mimetypes.guess_type(str(path))
         self._set_headers(200, ctype or "application/octet-stream")
-        self.wfile.write(path.read_bytes())
+        if not head_only:
+            self.wfile.write(path.read_bytes())
 
     def do_OPTIONS(self):
         self._set_headers(204)
+
+    def do_HEAD(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path in ("/", "/index.html"):
+            return self._serve_file("index.html", head_only=True)
+
+        if not self._authorized():
+            self._set_headers(401)
+            return
+
+        if path in (
+            "/api/health",
+            "/api/summary",
+            "/api/dashboard/markets",
+            "/api/dashboard/snapshot",
+            "/api/dashboard/logs",
+            "/api/config",
+        ):
+            self._set_headers(200)
+            return
+
+        self._set_headers(404, "text/plain; charset=utf-8")
 
     def do_GET(self):
         parsed = urlparse(self.path)

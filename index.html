@@ -619,6 +619,17 @@ function ensToMarket(tempC){return CITY.unit==="F"?cToF(tempC):tempC}
 function unitLabel(){return"°"+CITY.unit}
 function clip(x,lo,hi){return Math.max(lo,Math.min(hi,x))}
 function localDateInTZ(tz){return new Date().toLocaleDateString("en-CA",{timeZone:tz})}
+function cityTimeText(tz){
+  const now=new Date();
+  const d=now.toLocaleDateString("en-CA",{timeZone:tz});
+  const t=now.toLocaleTimeString("en-GB",{timeZone:tz,hour12:false});
+  return `${tz} ${d} ${t}`;
+}
+function updateCityClock(){
+  const el=$("ut");
+  if(!el||!CITY||!CITY.tz)return;
+  el.textContent=cityTimeText(CITY.tz);
+}
 function localHourInTZ(tz){
   const parts=new Intl.DateTimeFormat("en-GB",{timeZone:tz,hour12:false,hour:"2-digit",minute:"2-digit"}).formatToParts(new Date());
   const hh=parseInt((parts.find(p=>p.type==="hour")||{}).value||"0",10);
@@ -1184,7 +1195,7 @@ function render(){
     if($("logPanel"))$("logPanel").style.gridColumn="1 / -1";
   }
 
-  $("ut").textContent=new Date().toLocaleTimeString();
+  updateCityClock();
 
   // Entry timing (live mode)
   const et=$("entryTiming");
@@ -1252,7 +1263,7 @@ refreshSummary(false);
 refreshLiveLogs();
 renderCityNav();
 selectCity("london"); // default
-setInterval(()=>{cd--;$("badge").textContent="Auto-refresh "+cd+"s";if(cd<=0)refresh()},1000);
+setInterval(()=>{cd--;$("badge").textContent="Auto-refresh "+cd+"s";updateCityClock();if(cd<=0)refresh()},1000);
 setInterval(()=>refreshSummary(false),15000);
 setInterval(()=>refreshLiveLogs(),10000);
 </script>

@@ -65,7 +65,7 @@ API_RETRY_ATTEMPTS = 3
 API_RETRY_BACKOFF_SECONDS = 0.6
 
 # Market availability probing
-NONEXISTENT_MARKET_RECHECK_SECONDS = 7200  # Recheck unopened dates every 2h
+NONEXISTENT_MARKET_RECHECK_SECONDS = 900   # Recheck unopened dates every 15m (effectively each 30m cycle)
 
 CYCLE_INTERVAL_SECONDS = 1800  # 30 minutes between main cycles
 TELEGRAM_POLL_SECONDS = 60     # Fast polling for button presses

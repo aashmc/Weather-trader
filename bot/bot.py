@@ -28,7 +28,12 @@ from market import (
     cancel_order, check_order_status, bracket_degree,
     fetch_wallet_balance,
 )
-from strategy import analyze_brackets, get_actionable_signals, compute_totals
+from strategy import (
+    analyze_brackets,
+    get_actionable_signals,
+    compute_totals,
+    condition_probs_on_observed_high,
+)
 from risk import (
     can_trade, record_trade, update_fill_status, get_existing_positions,
     get_daily_exposure, get_daily_pnl, is_kill_switch_active,
@@ -463,14 +468,14 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
         corrected_dist = bias_correct(
             ensemble["raw_dist"], bias_mean_used, bias_sd_used
         )
-        raw_probs = map_to_brackets(ensemble["raw_dist"], brackets)
-        corrected_probs = map_to_brackets(corrected_dist, brackets)
+        raw_probs_base = map_to_brackets(ensemble["raw_dist"], brackets)
+        corrected_probs_base = map_to_brackets(corrected_dist, brackets)
         record_forecast_snapshot(
             city_name=city_name,
             date_str=date_str,
             ensemble_mean=ensemble["mean"],
             lead_bucket=lead_bucket,
-            corrected_probs=corrected_probs,
+            corrected_probs=corrected_probs_base,
         )
         if bias_meta.get("used_rolling"):
             log.info(
@@ -481,6 +486,22 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
 
         # 3. Fetch METAR
         metar = await fetch_metar(city, date_str)
+        raw_probs, _raw_cond_meta = condition_probs_on_observed_high(
+            brackets, raw_probs_base, metar["day_high_market"]
+        )
+        corrected_probs, corr_cond_meta = condition_probs_on_observed_high(
+            brackets, corrected_probs_base, metar["day_high_market"]
+        )
+        if corr_cond_meta.get("applied") and corr_cond_meta.get("impossible_count", 0) > 0:
+            log.info(
+                f"  Observed-high conditioning: {corr_cond_meta.get('impossible_count', 0)} "
+                f"brackets impossible at high={metar['day_high_market']}"
+            )
+        if corr_cond_meta.get("fallback_label"):
+            log.warning(
+                f"  Observed-high conditioning fallback used → "
+                f"{corr_cond_meta.get('fallback_label')}"
+            )
 
         # 3b. Build late-session guard context (history-based local cutoff)
         market_month = int(date_str.split("-")[1])

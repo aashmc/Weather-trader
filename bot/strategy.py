@@ -251,6 +251,84 @@ def _is_impossible_after_observed_high(bracket: dict, observed_high_market: floa
     return False
 
 
+def _contains_temp(bracket: dict, temp: float) -> bool:
+    """True if a bracket contains this temperature value in market units."""
+    btype = bracket.get("type")
+    if btype == "below":
+        return temp <= float(bracket["high"])
+    if btype == "single":
+        return temp == float(bracket["val"])
+    if btype == "range":
+        return float(bracket["low"]) <= temp <= float(bracket["high"])
+    if btype == "above":
+        return temp >= float(bracket["low"])
+    return False
+
+
+def condition_probs_on_observed_high(
+    brackets: list[dict],
+    probs_by_label: dict[str, float],
+    observed_high_market: float | None,
+) -> tuple[dict[str, float], dict]:
+    """
+    Condition bracket probabilities on observed day-high.
+    Any bracket already impossible given observed high is set to zero, then
+    remaining probability mass is renormalized.
+
+    Returns:
+      (conditioned_probs, meta)
+    """
+    if observed_high_market is None:
+        return dict(probs_by_label), {"applied": False, "reason": "no_observed_high"}
+
+    conditioned = {}
+    impossible_labels = []
+    possible_labels = []
+    for b in brackets:
+        label = b["label"]
+        p = float(probs_by_label.get(label, 0.0) or 0.0)
+        if _is_impossible_after_observed_high(b, observed_high_market):
+            conditioned[label] = 0.0
+            impossible_labels.append(label)
+        else:
+            conditioned[label] = max(0.0, p)
+            possible_labels.append(label)
+
+    total = sum(conditioned.values())
+    fallback_label = None
+
+    if total > 0:
+        for label in conditioned:
+            conditioned[label] /= total
+    else:
+        # Rare case: prior puts zero mass on all feasible buckets.
+        # Fall back to the bracket containing observed high; if missing, use first feasible.
+        try:
+            obs = float(observed_high_market)
+        except (TypeError, ValueError):
+            obs = None
+        if obs is not None:
+            for b in brackets:
+                label = b["label"]
+                if label in possible_labels and _contains_temp(b, obs):
+                    fallback_label = label
+                    break
+        if fallback_label is None and possible_labels:
+            fallback_label = possible_labels[0]
+        for label in conditioned:
+            conditioned[label] = 0.0
+        if fallback_label is not None:
+            conditioned[fallback_label] = 1.0
+
+    return conditioned, {
+        "applied": True,
+        "observed_high_market": observed_high_market,
+        "impossible_count": len(impossible_labels),
+        "possible_count": len(possible_labels),
+        "fallback_label": fallback_label,
+    }
+
+
 # ══════════════════════════════════════════════════════
 # MAIN ANALYSIS PIPELINE
 # ══════════════════════════════════════════════════════

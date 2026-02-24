@@ -23,6 +23,7 @@ from market import fetch_wallet_balance
 from market import fetch_market, fetch_all_books, build_slug, GAMMA_API
 from metar import fetch_metar
 from risk import get_portfolio_summary, get_state
+from strategy import condition_probs_on_observed_high
 
 logging.basicConfig(
     level=logging.INFO,
@@ -250,11 +251,11 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
         raise ensemble_res
     ensemble_data = ensemble_res
 
-    raw_probs = map_to_brackets(ensemble_data["raw_dist"], brackets)
+    raw_probs_base = map_to_brackets(ensemble_data["raw_dist"], brackets)
     corrected_dist = bias_correct(
         ensemble_data["raw_dist"], city["bias_mean"], city["bias_sd"]
     )
-    corrected_probs = map_to_brackets(corrected_dist, brackets)
+    corrected_probs_base = map_to_brackets(corrected_dist, brackets)
 
     if isinstance(metar_res, Exception):
         metar_data = {
@@ -266,6 +267,13 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
         }
     else:
         metar_data = metar_res
+
+    raw_probs, _raw_cond_meta = condition_probs_on_observed_high(
+        brackets, raw_probs_base, metar_data.get("day_high_market")
+    )
+    corrected_probs, corr_cond_meta = condition_probs_on_observed_high(
+        brackets, corrected_probs_base, metar_data.get("day_high_market")
+    )
 
     books_raw = {} if isinstance(books_res, Exception) else books_res
     books = {
@@ -293,6 +301,7 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
             "count": int(ensemble_data.get("count", 0)),
             "raw_probs": raw_probs,
             "corrected_probs": corrected_probs,
+            "conditioning": corr_cond_meta,
             "model_agreement": ensemble_data.get("model_votes", {}),
             "family_agreement": ensemble_data.get("family_votes", {}),
         },

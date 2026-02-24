@@ -104,12 +104,6 @@ td:first-child{text-align:left;font-weight:500;color:var(--tx)}
 <div class="sidebar">
 <div class="sb-title">Markets</div>
 <div id="cityNav"></div>
-<div style="border-top:1px solid var(--bd);margin-top:10px;padding-top:10px">
-<div class="sb-title">System</div>
-<div class="sb-item" id="navConfig" onclick="showPage('config')">
-<span class="sb-flag">⚙</span><div><div>Config</div><div class="sb-meta">Bot Parameters</div></div>
-</div>
-</div>
 </div>
 
 <div class="main" id="tradingPage">
@@ -126,12 +120,7 @@ td:first-child{text-align:left;font-weight:500;color:var(--tx)}
 <div class="st"><div class="st-l">METAR Live</div><div class="st-v" id="curT">—</div><div class="st-s" id="curTs">—</div></div>
 <div class="st"><div class="st-l">Day High (METAR)</div><div class="st-v" id="dH">—</div><div class="st-s" id="dHs">—</div></div>
 <div class="st"><div class="st-l">Ensemble Mean</div><div class="st-v" id="ensMean">—</div><div class="st-s" id="ensSrc">loading...</div></div>
-<div class="st"><div class="st-l">Kelly Mode</div><div class="st-v">30%</div><div class="st-s">third Kelly (conservative)</div></div>
-</div>
-
-<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-<button id="modeBtn" onclick="toggleMode()" style="padding:5px 14px;border-radius:4px;border:1px solid var(--bd);background:var(--sf);color:var(--tx);cursor:pointer;font-size:10px;font-weight:500;font-family:'IBM Plex Mono',monospace;letter-spacing:.5px">PAPER $100</button>
-<span id="modeLabel" style="font-size:10px;color:var(--dm)">PAPER MODE: All filters off · $100 bankroll</span>
+<div class="st"><div class="st-l">Execution</div><div class="st-v">LIVE</div><div class="st-s">strict filters enabled</div></div>
 </div>
 
 <div id="entryTiming" style="display:none;padding:8px 14px;border-radius:6px;margin-bottom:8px;font-size:11px;border:1px solid var(--dm)"></div>
@@ -158,81 +147,8 @@ td:first-child{text-align:left;font-weight:500;color:var(--tx)}
 <div style="display:flex;gap:14px;margin-top:6px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm)"><span style="color:var(--h1)">◼ Raw</span><span style="color:var(--h2)">◼ Corrected</span><span style="opacity:.35">◼ Market</span></div>
 </div>
 
-<div class="pnl-bar" id="pnlBar"><div class="pnl-dot" id="pnlDot"></div><span id="pnlStatus">Initializing...</span></div>
-<div class="pn">
-<div class="pt" id="ptHeader">Paper Trades · $100 Bankroll · ⅓ Kelly</div>
-<div class="pnl-big" id="pnlBigBox" style="display:none">
-<div class="pnl-big-label" id="pnlBigLabel">Unrealized P&L</div>
-<div class="pnl-big-val" id="pnlBigVal">—</div>
-<div class="pnl-big-sub" id="pnlBigSub">—</div>
-</div>
-<table>
-<thead><tr>
-<th style="text-align:left">Bracket</th><th style="text-align:center">Signal</th>
-<th>Model %</th><th>Best Ask</th><th>VWAP</th><th>Cur Bid</th><th>Ctrs</th><th>Wager</th><th>E[P]</th><th id="resH">Unrealized</th>
-</tr></thead>
-<tbody id="ptTbl"></tbody>
-<tfoot><tr style="border-top:2px solid var(--bd)">
-<td colspan="5" style="text-align:left;font-weight:700">TOTALS</td>
-<td></td><td style="font-weight:600" id="ptCtrs">—</td><td style="font-weight:700" id="ptWager">—</td>
-<td style="color:var(--dm);font-weight:700" id="ptEv">—</td>
-<td id="ptTotal" style="font-weight:700;color:var(--dm)">—</td>
-</tr></tfoot>
-</table>
-</div>
-
 <div class="pn"><div class="pt">Log</div><div id="log"></div></div>
 <div class="ft" id="footer">—</div>
-</div>
-
-<!-- CONFIG PAGE -->
-<div class="main" id="configPage" style="display:none">
-<div class="hdr">
-<div><h1>Weather Trader</h1><h2>Bot Configuration</h2></div>
-<div class="hr"><button onclick="exportConfig()" style="padding:5px 14px;border-radius:4px;border:1px solid var(--gn);background:rgba(22,163,74,.06);color:var(--gn);cursor:pointer;font-size:10px;font-weight:600;font-family:'IBM Plex Mono',monospace;letter-spacing:.5px">EXPORT JSON</button></div>
-</div>
-
-<div class="pn">
-<div class="pt">Trading Parameters</div>
-<div class="cfg-grid" id="cfgTrading"></div>
-</div>
-
-<div class="pn">
-<div class="pt">Risk Management</div>
-<div class="cfg-grid" id="cfgRisk"></div>
-</div>
-
-<div class="pn">
-<div class="pt">Signal Filters</div>
-<div class="cfg-grid" id="cfgFilters"></div>
-</div>
-
-<div class="pn">
-<div class="pt">Execution</div>
-<div class="cfg-grid" id="cfgExecution"></div>
-</div>
-
-<div class="pn">
-<div class="pt">City Configurations</div>
-<div id="cfgCities"></div>
-</div>
-
-<div class="pn">
-<div class="pt">Data Logging (Recalibration)</div>
-<div class="cfg-grid" id="cfgLogging"></div>
-</div>
-
-<div class="pn">
-<div class="pt">Infrastructure</div>
-<div class="cfg-grid" id="cfgInfra"></div>
-</div>
-
-<div class="pn">
-<div class="pt">Exported Config JSON</div>
-<pre id="cfgJson" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm);background:var(--sf);padding:12px;border-radius:4px;max-height:300px;overflow-y:auto;white-space:pre-wrap;display:none"></pre>
-</div>
-
-<div class="ft">Config changes here update the dashboard only. To update the bot, export JSON and upload to your VPS.</div>
 </div>
 
 <script>
@@ -292,10 +208,13 @@ let CITY=CITIES.london; // active city
 let B=[]; // bracket labels — populated dynamically from Polymarket
 let TOKENS={};
 const KELLY_FRAC=0.30,RS=60;
-let LIVE_MODE=false,BR=100;
-const FILTERS={
-  paper:{minEdge:0,minDepth:0,maxAsk:1.0,minModels:0,bankroll:100},
-  live:{minEdge:0.05,minDepth:20,maxAsk:0.30,minModels:2,bankroll:25}
+const LIVE_MODE=true,BR=25;
+const FILTERS={minEdge:0.05,minDepth:20,maxAsk:0.50,minModels:2,bankroll:25};
+const CITY_FILTERS={
+  london:{minEdge:0.05,minModels:3,maxAsk:0.50},
+  seoul:{minEdge:0.05,minModels:3,maxAsk:0.50},
+  nyc:{minEdge:0.08,minModels:2,maxAsk:0.50},
+  seattle:{minEdge:0.05,minModels:2,maxAsk:0.50},
 };
 const LATE_GUARD_CONFIG={
   enabled:true,
@@ -306,12 +225,11 @@ const LATE_GUARD_CONFIG={
   minEdgeAfterCutoff:0.08,
   freezeAllNewEntries:true,
 };
-function F(){return LIVE_MODE?FILTERS.live:FILTERS.paper}
+function F(){return {...FILTERS,...(CITY_FILTERS[CITY.polyCity]||{})}}
 
 let prices={},books={},rawProbs={},corrProbs={},ensMean=0,ensCount=0;
 let gasCostUsd=0.03,polPrice=0.35,metarTemp=null,metarHigh=null,metarDayMax=null;
 let cd=RS,pxi=0;
-let ptResolved=false,ptWinner=null;
 const EXEC_CONFIG={
   enabled:true,
   feeRate:0.0,             // weather markets are usually fee-free
@@ -444,7 +362,6 @@ function selectCity(key){
   // Reset all state
   B=[];TOKENS={};prices={};books={};rawProbs={};corrProbs={};
   ensMean=0;ensCount=0;metarTemp=null;metarHigh=null;metarDayMax=null;
-  ptResolved=false;ptWinner=null;
   _marketsDiscovered=false;
   // Immediately clear analysis display to prevent stale brackets showing
   $("tbl").innerHTML="";$("totals").innerHTML="";$("hist").innerHTML="";
@@ -492,6 +409,7 @@ function renderCityNav(){
 // ══════════════════════════════════════════════════════════
 function applyFilters(a){
   const f=F(),reasons=[];
+  if(!a.isCandidate)reasons.push("Outside favorite ±1");
   if(a.trueEdge<f.minEdge)reasons.push(`Edge ${(a.trueEdge*100).toFixed(1)}pt < ${(f.minEdge*100)}pt min`);
   if(a.askD<f.minDepth&&f.minDepth>0)reasons.push(`Depth ${a.askD.toFixed(0)} < ${f.minDepth} min`);
   if(a.ask>f.maxAsk&&f.maxAsk<1)reasons.push(`Ask ${(a.ask*100).toFixed(0)}¢ > ${(f.maxAsk*100)}¢ max`);
@@ -503,18 +421,6 @@ function applyFilters(a){
     reasons.push(`Late edge ${(a.trueEdge*100).toFixed(1)}pt < ${(LATE_GUARD_CONFIG.minEdgeAfterCutoff*100).toFixed(0)}pt`);
   }
   return{pass:reasons.length===0&&a.trueEdge>0,reasons};
-}
-
-function toggleMode(){
-  LIVE_MODE=!LIVE_MODE;BR=F().bankroll;
-  const btn=$("modeBtn");
-  btn.textContent=LIVE_MODE?"LIVE $25":"PAPER $100";
-  btn.style.background=LIVE_MODE?"rgba(220,38,38,.06)":"var(--sf)";
-  btn.style.color=LIVE_MODE?"var(--rd)":"var(--tx)";
-  btn.style.borderColor=LIVE_MODE?"var(--rd)":"var(--bd)";
-  $("modeLabel").textContent=LIVE_MODE?"LIVE MODE: Min edge 5pt · Min depth 20 · Max ask 30¢ · ≥2 models · ⅓ Kelly · $25 bankroll":"PAPER MODE: All filters off · ⅓ Kelly · $100 bankroll";
-  render();ptRender();
-  log(LIVE_MODE?"Switched to LIVE mode ($25, strict filters)":"Switched to PAPER mode ($100, no filters)","lw");
 }
 
 // ══════════════════════════════════════════════════════════
@@ -604,7 +510,6 @@ function selectDate(dateStr){
   $("dH").textContent="—";$("dHs").textContent=ACTIVE_DATE.isToday?"Awaiting data":(ACTIVE_DATE.isPast?"Loading...":"Forecast only");
   metarHigh=null;metarTemp=null;metarDayMax=null;
   B=[];prices={};books={};TOKENS={};rawProbs={};corrProbs={};ensMean=0;ensCount=0;
-  ptResolved=false;ptWinner=null;
   document.querySelectorAll(".dtab").forEach(t=>t.classList.toggle("active",t.dataset.date===dateStr));
   refresh();
 }
@@ -620,15 +525,7 @@ function renderDateTabs(){
     else if(dc.isToday){tag="TODAY";tagClass="dtag-today"}
     else if(dc.isFuture){tag="UPCOMING";tagClass="dtag-future"}
     else{tag="PAST";tagClass="dtag-past"}
-    const ledger=TRADE_LEDGER[CITY.icao+":"+dc.dateStr];
-    let pnlTag="";
-    if(ledger&&ledger.result&&ledger.result.resolved){
-      const pnl=ledger.result.pnl;
-      pnlTag=`<span style="font-size:8px;margin-left:4px;color:${pnl>=0?"var(--gn)":"var(--rd)"}">${pnl>=0?"+":""}$${Math.abs(pnl).toFixed(0)}</span>`;
-    }else if(ledger&&ledger.trades.length){
-      pnlTag=`<span style="font-size:8px;margin-left:4px;color:var(--dm)">●</span>`;
-    }
-    return`<div class="dtab ${active}" data-date="${dc.dateStr}" onclick="selectDate('${dc.dateStr}')">${dc.displayShort}<span class="dtag ${tagClass}">${tag}</span>${pnlTag}</div>`;
+    return`<div class="dtab ${active}" data-date="${dc.dateStr}" onclick="selectDate('${dc.dateStr}')">${dc.displayShort}<span class="dtag ${tagClass}">${tag}</span></div>`;
   }).join("");
 }
 
@@ -882,6 +779,8 @@ function render(){
     if(ask>best.ask)return{label,ask};
     return best;
   },{label:null,ask:-1}).label;
+  const favoriteIdx=B.indexOf(favoriteLabel);
+  const candidateSet=new Set([favoriteIdx-1,favoriteIdx,favoriteIdx+1].filter(i=>i>=0&&i<B.length).map(i=>B[i]));
   const nowLocalHour=localHourInTZ(CITY.tz);
   const localDateNow=localDateInTZ(CITY.tz);
   const cutoffHour=LATE_GUARD_CONFIG.cutoffByCity[CITY.polyCity]??LATE_GUARD_CONFIG.defaultCutoffHour;
@@ -897,6 +796,7 @@ function render(){
     const deg=pb?(pb.val??pb.low??pb.high??0):0;
     const modelVotes=ma[deg]||0;
     const isFavorite=b===favoriteLabel;
+    const isCandidate=candidateSet.has(b);
     const lateImpossible=lateApplies?isImpossibleAfterObservedHigh(b,metarDayMax):false;
     // Check neighboring degrees for range brackets
     let mv=modelVotes;
@@ -954,7 +854,7 @@ function render(){
       rawEdge,baseTrueEdge,trueEdge,edgeAfterCosts,effectiveAsk,fillFraction,immediateFillFraction,
       continuationFillProb,feePerContract,gasPerContract,slippagePenalty,executionAdjusted:EXEC_CONFIG.enabled,
       bet,ev,sig,fFull,contracts,bidD:bk?bk.bidD:0,askD:bk?bk.askD:0,last:bk?bk.last:0,modelVotes:mv,
-      isFavorite,latePhase,lateImpossible,observedHighText:metarDayMax==null?"—":String(metarDayMax)};
+      isFavorite,isCandidate,latePhase,lateImpossible,observedHighText:metarDayMax==null?"—":String(metarDayMax)};
     if(LIVE_MODE&&(sig==="BUY"||sig==="LEAN")){
       const filt=applyFilters(row);
       if(!filt.pass){row.sig="FILTERED";row.filterReasons=filt.reasons;row.bet=0;row.ev=0}
@@ -969,7 +869,7 @@ function render(){
   const bn=$("sigB");
   if(best){
     bn.style.borderColor="rgba(22,163,74,.2)";$("sigT").style.color="var(--gn)";
-    $("sigT").textContent=LIVE_MODE?"BUY (strict filters passed)":"BUY YES (exec-adjusted edge, ⅓ Kelly)";
+    $("sigT").textContent="BUY (strict filters passed)";
     $("sigN").textContent=best.bracket;
     $("sigD").innerHTML=[
       ["Corrected",(best.corP*100).toFixed(1)+"%","var(--gn)"],
@@ -981,7 +881,7 @@ function render(){
       ["⅓Kelly","$"+best.bet.toFixed(2),"var(--gn)"],
       ["E[Profit]","+$"+best.ev.toFixed(2),"var(--gn)"],
     ].map(([l,v,c])=>`<div class="si"><div class="si-l">${l}</div><div class="si-v" style="color:${c}">${v}</div></div>`).join("");
-  }else if(LIVE_MODE&&filtered.length>0){
+  }else if(filtered.length>0){
     bn.style.borderColor="var(--bd)";$("sigT").style.color="var(--dm)";
     $("sigT").textContent=filtered.length+" signal(s) filtered by live-mode rules";
     $("sigN").textContent="NO TRADE";
@@ -1066,160 +966,6 @@ function render(){
 }
 
 // ══════════════════════════════════════════════════════════
-// PAPER TRADE P&L
-// ══════════════════════════════════════════════════════════
-const TRADE_LEDGER={
-  "EGLC:2026-02-21":{
-    trades:[
-      {bracket:"11°C",signal:"BUY",corrP:.065,ask:.019,vwap:.0251,contracts:93,wager:2.34,ev:3.70,slip:"+3214bp"},
-      {bracket:"12°C",signal:"BUY",corrP:.222,ask:.073,vwap:.0749,contracts:107,wager:8.02,ev:15.79,slip:"+264bp"},
-      {bracket:"13°C",signal:"BUY",corrP:.297,ask:.260,vwap:.2600,contracts:9,wager:2.34,ev:0.33,slip:"0bp"},
-    ],
-    total:12.69,
-    result:{resolved:true,winner:"14°C",pnl:-12.69}
-  }
-};
-
-function ledgerKey(){return CITY.icao+":"+ACTIVE_DATE.dateStr}
-function getActiveTrades(){return(TRADE_LEDGER[ledgerKey()]||{trades:[]}).trades}
-function getActiveTotal(){return(TRADE_LEDGER[ledgerKey()]||{total:0}).total}
-function getActiveResult(){return(TRADE_LEDGER[ledgerKey()]||{}).result||null}
-function hasActiveTrades(){return getActiveTrades().length>0}
-
-function ptPhase(){
-  const now=new Date(),s=new Date(ACTIVE_DATE.startUTC),e=new Date(ACTIVE_DATE.endUTC);
-  const stored=getActiveResult();
-  if(stored&&stored.resolved){ptResolved=true;ptWinner=stored.winner}
-  if(now<s)return"PRE";if(now<e)return"LIVE";return"POST";
-}
-
-function ptCalcPnL(){
-  if(!ptWinner)return 0;
-  let pnl=0;for(const t of getActiveTrades())pnl+=(t.bracket===ptWinner)?(t.contracts*1-t.wager):(-t.wager);
-  return pnl;
-}
-function ptCalcUnrealizedPnL(){
-  const trades=getActiveTrades();let tU=0,tMV=0,tC=0;const details=[];
-  for(const t of trades){
-    const bk=books[t.bracket],curBid=bk?bk.bb:(prices[t.bracket]||0);
-    const mV=t.contracts*curBid,c=t.wager,u=mV-c;
-    tU+=u;tMV+=mV;tC+=c;details.push({bracket:t.bracket,curBid,mktValue:mV,cost:c,unrealized:u});
-  }
-  return{total:tU,details,mktValue:tMV,cost:tC};
-}
-
-async function ptFetchMetar(){
-  const metarUrl=`https://aviationweather.gov/api/data/metar?ids=${CITY.icao}&format=json&hours=72`;
-  try{
-    const r=await fetch(PX[0](metarUrl),{signal:AbortSignal.timeout(12000)});if(!r.ok)return;
-    const data=JSON.parse(await r.text());
-    // Filter by LOCAL date using obsTime (timezone-aware)
-    const dayObs=data.filter(m=>ACTIVE_DATE.metarLocalDateFilter(m.obsTime));
-    if(dayObs.length){
-      const temps=dayObs.map(m=>m.temp).filter(t=>t!=null);
-      if(temps.length){
-        const mxC=Math.max(...temps);metarDayMax=CITY.unit==="F"?Math.round(cToF(mxC)):mxC;
-        $("dH").textContent=metarDayMax+unitLabel();
-        $("dHs").textContent=temps.length+" readings · "+ACTIVE_DATE.displayShort;
-        log(ACTIVE_DATE.displayShort+" METAR high: "+metarDayMax+unitLabel()+" ("+temps.length+" obs)","lo");
-      }
-    }
-  }catch(e){}
-}
-
-async function ptCheckResolution(){
-  if(ptResolved)return;if(ptPhase()!=="POST")return;
-  try{
-    const r=await fetch(PX[pxi](ACTIVE_DATE.polyUrl),{signal:AbortSignal.timeout(10000)});
-    const ev=(JSON.parse(await r.text()))[0]||{};
-    for(const m of(ev.markets||[])){
-      const op=JSON.parse(m.outcomePrices||"[]");
-      if(op[0]&&parseFloat(op[0])>=0.99){ptWinner=m.groupItemTitle;ptResolved=true;log("RESOLVED: "+ptWinner+" won!","lo");break}
-    }
-  }catch(e){}
-  const ft=new Date(ACTIVE_DATE.endUTC);ft.setUTCHours(ft.getUTCHours()+6);
-  if(!ptResolved&&metarDayMax!==null&&new Date()>ft){
-    ptWinner=tempToBracket(metarDayMax);ptResolved=true;log("Resolved via METAR (unofficial): "+ptWinner,"lw");
-  }
-}
-
-function ptRender(){
-  const phase=ptPhase(),trades=getActiveTrades(),activeTotal=getActiveTotal(),hasTrades=trades.length>0;
-  const bar=$("pnlBar"),dot=$("pnlDot"),txt=$("pnlStatus");
-  if(!hasTrades){
-    bar.className="pnl-bar pnl-wait";dot.style.background="var(--dm)";
-    txt.textContent="NO POSITIONS — "+ACTIVE_DATE.displayShort;
-  }else if(ptResolved){
-    const pnl=ptCalcPnL();
-    if(pnl>0){bar.className="pnl-bar pnl-win";dot.style.background="var(--gn)";txt.textContent="RESOLVED ✓ — "+ptWinner+" — P&L: +$"+pnl.toFixed(2)}
-    else{bar.className="pnl-bar pnl-lose";dot.style.background="var(--rd)";txt.textContent="RESOLVED ✗ — "+ptWinner+" — P&L: -$"+Math.abs(pnl).toFixed(2)}
-  }else if(phase==="PRE"){
-    const hrs=Math.max(0,Math.floor((new Date(ACTIVE_DATE.startUTC)-new Date())/3600000));
-    bar.className="pnl-bar pnl-wait";dot.style.background="var(--dm)";
-    const u=ptCalcUnrealizedPnL(),uS=u.mktValue>0?" · Unrealized: "+(u.total>=0?"+":"")+u.total.toFixed(2):"";
-    txt.textContent="WAITING — starts in ~"+hrs+"h — "+trades.length+" positions ($"+activeTotal.toFixed(2)+" wagered)"+uS;
-  }else if(phase==="LIVE"){
-    bar.className="pnl-bar pnl-live";dot.style.background="var(--tx)";
-    txt.textContent="LIVE — "+ACTIVE_DATE.displayShort+" — METAR high: "+(metarDayMax!==null?metarDayMax+unitLabel()+" → "+tempToBracket(metarDayMax):"awaiting data");
-  }else{
-    bar.className="pnl-bar pnl-wait";dot.style.background="var(--dm)";
-    txt.textContent="POST — awaiting finalization"+(metarDayMax!==null?" · METAR high was "+metarDayMax+unitLabel():"");
-  }
-
-  const uPnL=ptCalcUnrealizedPnL();let html="";
-  if(!hasTrades){
-    html=`<tr><td colspan="10" style="text-align:center;color:var(--dm);padding:16px">No paper trades for ${ACTIVE_DATE.displayShort}</td></tr>`;
-  }else{
-    for(let i=0;i<trades.length;i++){
-      const t=trades[i],u=uPnL.details[i];
-      const isWin=ptResolved&&t.bracket===ptWinner,isLose=ptResolved&&t.bracket!==ptWinner;
-      const leading=!ptResolved&&metarDayMax!==null&&t.bracket===tempToBracket(metarDayMax);
-      let rc="—",rcol="var(--dm)",cls="";
-      if(ptResolved){
-        if(isWin){rc="+$"+(t.contracts-t.wager).toFixed(2);rcol="var(--gn)";cls="pos-w"}
-        else{rc="-$"+t.wager.toFixed(2);rcol="var(--rd)";cls="pos-l"}
-      }else if(u&&u.curBid>0){
-        rc=(u.unrealized>=0?"+":"")+u.unrealized.toFixed(2);rcol=u.unrealized>=0?"var(--gn)":"var(--rd)";
-        if(leading)rc+=" ⟵";
-      }else if(leading){rc="⟵ leading";rcol="var(--tx)"}
-      html+=`<tr class="${cls}"><td style="color:${isWin?"var(--gn)":isLose?"var(--rd)":"var(--tx)"}">${t.bracket}</td>
-      <td style="text-align:center"><span style="font-size:8px;padding:2px 5px;border-radius:3px;background:rgba(22,163,74,.06);color:var(--gn)">${t.signal}</span></td>
-      <td>${(t.corrP*100).toFixed(1)}%</td><td>${(t.ask*100).toFixed(1)}¢</td>
-      <td style="color:${t.vwap>t.ask?"var(--rd)":"var(--dm)"}">${((t.vwap||t.ask)*100).toFixed(1)}¢</td>
-      <td style="font-size:9px;color:${u&&u.curBid>0?"var(--tx)":"var(--dm)"}">${u&&u.curBid>0?(u.curBid*100).toFixed(1)+"¢":t.slip||"—"}</td>
-      <td>${t.contracts}</td><td>$${t.wager.toFixed(2)}</td><td style="color:var(--gn)">+$${t.ev.toFixed(2)}</td>
-      <td style="color:${rcol};font-weight:700">${rc}</td></tr>`;
-    }
-  }
-  $("ptTbl").innerHTML=html;
-  const totalCtrs=trades.reduce((s,t)=>s+t.contracts,0),totalEv=trades.reduce((s,t)=>s+t.ev,0);
-  $("ptCtrs").textContent=hasTrades?totalCtrs:"—";
-  $("ptWager").textContent=hasTrades?"$"+activeTotal.toFixed(2):"—";
-  $("ptEv").textContent=hasTrades?"+$"+totalEv.toFixed(2):"—";
-  if(!hasTrades){$("ptTotal").textContent="—";$("ptTotal").style.color="var(--dm)"}
-  else if(ptResolved){const p=ptCalcPnL();$("ptTotal").textContent=(p>=0?"+":"-")+"$"+Math.abs(p).toFixed(2);$("ptTotal").style.color=p>=0?"var(--gn)":"var(--rd)"}
-  else if(uPnL.total!==0||uPnL.mktValue>0){$("ptTotal").textContent=(uPnL.total>=0?"+":"")+uPnL.total.toFixed(2);$("ptTotal").style.color=uPnL.total>=0?"var(--gn)":"var(--rd)"}
-
-  $("pnlBigBox").style.display="none";
-  if(hasTrades&&!ptResolved&&uPnL.mktValue>0){
-    $("pnlBigBox").style.display="block";
-    $("pnlBigVal").textContent=(uPnL.total>=0?"+":"")+uPnL.total.toFixed(2);
-    $("pnlBigVal").style.color=uPnL.total>=0?"var(--gn)":"var(--rd)";
-    const pct=uPnL.cost>0?(uPnL.total/uPnL.cost*100):0;
-    $("pnlBigSub").textContent="Unrealized · Mkt: $"+uPnL.mktValue.toFixed(2)+" · Cost: $"+uPnL.cost.toFixed(2)+" · "+((pct>=0?"+":"")+pct.toFixed(0))+"%";
-    $("pnlBigLabel").textContent="Unrealized P&L";
-  }
-  if(ptResolved&&hasTrades){
-    $("pnlBigBox").style.display="block";
-    const p=ptCalcPnL(),roi=activeTotal>0?p/activeTotal*100:0;
-    $("pnlBigLabel").textContent="Realized P&L";
-    $("pnlBigVal").textContent=(p>=0?"+":"-")+"$"+Math.abs(p).toFixed(2);
-    $("pnlBigVal").style.color=p>=0?"var(--gn)":"var(--rd)";
-    $("pnlBigSub").textContent="ROI: "+(roi>=0?"+":"")+roi.toFixed(0)+"% · Winner: "+ptWinner+" · Wagered: $"+activeTotal.toFixed(2);
-  }
-}
-
-// ══════════════════════════════════════════════════════════
 // REFRESH LOOP
 // ══════════════════════════════════════════════════════════
 let _marketsDiscovered=false;
@@ -1241,188 +987,15 @@ async function refresh(){
   $("hdrTitle").innerHTML=CITY.name+" High Temp <span>· "+ACTIVE_DATE.display+"</span>";
   // Fetch Poly first (gets brackets + token IDs), then ensemble (needs brackets for range)
   await fetchPoly();
-  await Promise.all([fetchEnsemble(),fetchMetar(),fetchGas(),ptFetchMetar()]);
+  await Promise.all([fetchEnsemble(),fetchMetar(),fetchGas()]);
   await fetchBooks();
-  await ptCheckResolution();
-  render();ptRender();cd=RS;
+  render();cd=RS;
 }
-
-// ══════════════════════════════════════════════════════════
-// CONFIG PAGE
-// ══════════════════════════════════════════════════════════
-let currentPage="trading"; // "trading" or "config"
-const mainTradingPage=$("tradingPage");
-const configPage=$("configPage");
-
-function showPage(page){
-  currentPage=page;
-  if(page==="config"){
-    mainTradingPage.style.display="none";
-    configPage.style.display="block";
-    $("navConfig").classList.add("active");
-    document.querySelectorAll(".sb-item").forEach(el=>{if(el.id!=="navConfig")el.classList.remove("active")});
-    renderConfig();
-  }else{
-    mainTradingPage.style.display="block";
-    configPage.style.display="none";
-    $("navConfig").classList.remove("active");
-    renderCityNav();
-  }
-}
-
-// Bot config object — single source of truth
-const BOT_CONFIG={
-  // Trading
-  bankroll:50,kellyFraction:0.33,
-  // Risk
-  maxBetPerBracket:5,maxTotalExposure:20,dailyLossLimit:30,
-  // Filters
-  minTrueEdge:0.05,minModelAgreement:2,minAskDepth:20,maxAskPrice:0.50,
-  // Execution
-  orderType:"limit",orderTimeoutSec:300,reentry:"one_per_bracket",
-  autoRedeem:false,tradeWindow:"24/7",
-  // Logging
-  cycleIntervalSec:1800,logToSheets:true,logLocal:true,heartbeatEvery:6,
-  // Infrastructure
-  host:"hetzner",plan:"CX22"
-};
-
-function cfgField(id,label,desc,value,unit,editable=true){
-  const editHtml=editable
-    ?`<input class="cfg-input" id="cfg_${id}" type="${typeof value==='number'?'number':'text'}" value="${value}" onchange="updateConfig('${id}',this.value)" step="any">`
-    :`<span class="cfg-val" style="color:var(--tx)">${value}</span>`;
-  return`<div class="cfg-row"><div class="cfg-l"><div class="cfg-name">${label}</div><div class="cfg-desc">${desc}</div></div><div style="display:flex;align-items:center;gap:4px">${editHtml}<span style="font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm2)">${unit||""}</span></div></div>`;
-}
-
-function updateConfig(id,val){
-  const num=parseFloat(val);
-  BOT_CONFIG[id]=isNaN(num)?val:num;
-}
-
-function renderConfig(){
-  // Trading
-  $("cfgTrading").innerHTML=
-    cfgField("bankroll","Bankroll","Starting capital for position sizing",BOT_CONFIG.bankroll,"USD")+
-    cfgField("kellyFraction","Kelly Fraction","Fraction of full Kelly criterion (0.33 = ⅓ Kelly)",BOT_CONFIG.kellyFraction,"");
-
-  // Risk
-  $("cfgRisk").innerHTML=
-    cfgField("maxBetPerBracket","Max Bet / Bracket","Maximum wager on any single bracket",BOT_CONFIG.maxBetPerBracket,"USD")+
-    cfgField("maxTotalExposure","Max Total Exposure","Maximum total $ across all active positions",BOT_CONFIG.maxTotalExposure,"USD")+
-    cfgField("dailyLossLimit","Daily Loss Limit","Kill switch — stop trading if daily losses exceed this",BOT_CONFIG.dailyLossLimit,"USD");
-
-  // Filters
-  $("cfgFilters").innerHTML=
-    cfgField("minTrueEdge","Min True Edge","Minimum execution-adjusted edge to trigger BUY",BOT_CONFIG.minTrueEdge,"")+
-    cfgField("minModelAgreement","Min Model Agreement","Minimum distinct weather models predicting same bracket",BOT_CONFIG.minModelAgreement,"models")+
-    cfgField("minAskDepth","Min Ask Depth","Minimum contracts available on ask side",BOT_CONFIG.minAskDepth,"contracts")+
-    cfgField("maxAskPrice","Max Ask Price","Don't buy shares priced above this (limits downside)",BOT_CONFIG.maxAskPrice,"");
-
-  // Execution
-  $("cfgExecution").innerHTML=
-    cfgField("orderType","Order Type","limit = place at best ask, cancel if unfilled",BOT_CONFIG.orderType,"",false)+
-    cfgField("orderTimeoutSec","Order Timeout","Cancel unfilled limit orders after this duration",BOT_CONFIG.orderTimeoutSec,"sec")+
-    cfgField("reentry","Re-entry Rule","one_per_bracket = no adding to existing positions",BOT_CONFIG.reentry,"",false)+
-    cfgField("autoRedeem","Auto-Redeem","false = manual redemption, bot notifies via Telegram",BOT_CONFIG.autoRedeem?"yes":"no","",false)+
-    cfgField("tradeWindow","Trade Window","When the bot is allowed to place orders","24/7","",false);
-
-  // Logging
-  $("cfgLogging").innerHTML=
-    cfgField("cycleIntervalSec","Cycle Interval","How often the bot runs a full analysis cycle",BOT_CONFIG.cycleIntervalSec,"sec")+
-    cfgField("heartbeatEvery","Heartbeat Every N Cycles","Telegram alive-check frequency",BOT_CONFIG.heartbeatEvery,"cycles")+
-    `<div class="cfg-row"><div class="cfg-l"><div class="cfg-name">Data Captured Per Cycle</div><div class="cfg-desc">For recalibration — logged to Google Sheets + local JSONL</div></div></div>
-    <div style="padding:6px 0;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm);line-height:2">
-    ✓ Timestamp (UTC) · ✓ City + Market Date · ✓ Ensemble mean + member count<br>
-    ✓ Per-model member max temps · ✓ Model agreement per degree · ✓ Raw prob distribution<br>
-    ✓ Bias-corrected prob distribution · ✓ METAR current temp + day high + obs count<br>
-    ✓ Market prices per bracket · ✓ Order book bid/ask/spread/depth per bracket<br>
-    ✓ Execution-adjusted true edge + raw edge per bracket · ✓ Kelly bet sizing per bracket<br>
-    ✓ Signal (BUY/PASS/FILTERED) + filter reasons · ✓ Order ID + fill status + fill price<br>
-    ✓ Resolution winner + actual temperature · ✓ P&L per position + cumulative<br>
-    ✓ Gas cost estimate · ✓ POL/MATIC price at time of trade
-    </div>`;
-
-  // Infrastructure
-  $("cfgInfra").innerHTML=
-    cfgField("host","VPS Provider","Server hosting the bot 24/7",BOT_CONFIG.host,"",false)+
-    cfgField("plan","VPS Plan","2 vCPU, 4GB RAM, 40GB SSD",BOT_CONFIG.plan,"",false)+
-    `<div class="cfg-row"><div class="cfg-l"><div class="cfg-name">Endpoints</div><div class="cfg-desc">APIs the bot connects to</div></div></div>
-    <div style="padding:4px 0;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm);line-height:2">
-    Ensemble: ensemble-api.open-meteo.com<br>
-    Forecast: api.open-meteo.com (KMA synthetic)<br>
-    METAR: aviationweather.gov<br>
-    Polymarket: gamma-api.polymarket.com + clob.polymarket.com<br>
-    Gas: gasstation.polygon.technology<br>
-    POL Price: api.coingecko.com (polygon-ecosystem-token)<br>
-    Alerts: api.telegram.org<br>
-    Logging: Google Sheets via Apps Script webhook
-    </div>`;
-
-  // Cities
-  let ch="";
-  for(const[key,c] of Object.entries(CITIES)){
-    const models=c.ensembleModels.split(",").map(m=>m.replace("_ensemble","").replace("_eps","").replace("_seamless","").replace("_global","").replace("025","")).join(", ");
-    ch+=`<div class="cfg-city">
-      <div class="cfg-city-hdr"><span class="cfg-city-flag">${c.flag}</span><span class="cfg-city-name">${c.name}</span><span class="cfg-city-meta">${c.icao} · ${c.lat.toFixed(3)}°, ${c.lon.toFixed(3)}° · °${c.unit} · ${c.tz}</span></div>
-      <div class="cfg-city-grid">
-        <div class="cfg-city-item"><span>Station</span><span>${c.stationName}</span></div>
-        <div class="cfg-city-item"><span>Bias Mean</span><span>+${c.bias.mean}${c.unit==="F"?"°F":"°C"}</span></div>
-        <div class="cfg-city-item"><span>Bias SD</span><span>${c.bias.sd}</span></div>
-        <div class="cfg-city-item"><span>Ensemble</span><span>${models}</span></div>
-        <div class="cfg-city-item"><span>Synthetic</span><span>${c.syntheticModel||"none"}</span></div>
-        <div class="cfg-city-item"><span>Resolution</span><span><a href="${c.wunderground}" target="_blank" style="color:var(--h1);font-size:8px">Wunderground ${c.icao}</a></span></div>
-        <div class="cfg-city-item"><span>Calibration</span><span>${c.bias.note}</span></div>
-        <div class="cfg-city-item"><span>Poly Slug</span><span>${c.polyCity}</span></div>
-        <div class="cfg-city-item"><span>Total Models</span><span>${c.ensembleModels.split(",").length+(c.syntheticModel?1:0)}</span></div>
-      </div>
-    </div>`;
-  }
-  $("cfgCities").innerHTML=ch;
-}
-
-function exportConfig(){
-  const cfg={
-    version:"v3.1",
-    exported:new Date().toISOString(),
-    trading:{bankroll:BOT_CONFIG.bankroll,kelly_fraction:BOT_CONFIG.kellyFraction},
-    risk:{max_bet_per_bracket:BOT_CONFIG.maxBetPerBracket,max_total_exposure:BOT_CONFIG.maxTotalExposure,daily_loss_limit:BOT_CONFIG.dailyLossLimit},
-    filters:{min_true_edge:BOT_CONFIG.minTrueEdge,min_model_agreement:BOT_CONFIG.minModelAgreement,min_ask_depth:BOT_CONFIG.minAskDepth,max_ask_price:BOT_CONFIG.maxAskPrice},
-    execution:{order_type:BOT_CONFIG.orderType,order_timeout_sec:BOT_CONFIG.orderTimeoutSec,reentry:BOT_CONFIG.reentry,auto_redeem:BOT_CONFIG.autoRedeem,trade_window:BOT_CONFIG.tradeWindow},
-    logging:{cycle_interval_sec:BOT_CONFIG.cycleIntervalSec,heartbeat_every:BOT_CONFIG.heartbeatEvery},
-    cities:{}
-  };
-  for(const[key,c] of Object.entries(CITIES)){
-    cfg.cities[key]={
-      name:c.name,icao:c.icao,lat:c.lat,lon:c.lon,unit:c.unit,tz:c.tz,
-      poly_city:c.polyCity,
-      ensemble_models:c.ensembleModels.split(","),
-      synthetic_model:c.syntheticModel,
-      bias_mean:c.bias.mean,bias_sd:c.bias.sd,bias_note:c.bias.note
-    };
-  }
-  const jsonStr=JSON.stringify(cfg,null,2);
-  $("cfgJson").textContent=jsonStr;
-  $("cfgJson").style.display="block";
-  // Copy to clipboard
-  navigator.clipboard.writeText(jsonStr).then(()=>{
-    log("Config JSON copied to clipboard","lo");
-  }).catch(()=>{});
-  // Also trigger download
-  const blob=new Blob([jsonStr],{type:"application/json"});
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(blob);
-  a.download="weather_trader_config_"+new Date().toISOString().split("T")[0]+".json";
-  a.click();
-}
-
-// Override city nav click to switch back to trading page
-const _origSelectCity=selectCity;
-selectCity=function(key){showPage("trading");_origSelectCity(key)};
 
 // INIT
 renderCityNav();
 selectCity("london"); // default
-setInterval(()=>{if(currentPage==="trading"){cd--;$("badge").textContent="Auto-refresh "+cd+"s";if(cd<=0)refresh()}},1000);
+setInterval(()=>{cd--;$("badge").textContent="Auto-refresh "+cd+"s";if(cd<=0)refresh()},1000);
 </script>
 </body>
 </html>

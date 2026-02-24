@@ -4,6 +4,7 @@ Provides read/write endpoints for live dashboard state and bot controls.
 """
 
 import asyncio
+from collections import deque
 import json
 import logging
 import mimetypes
@@ -35,6 +36,7 @@ API_TOKEN = os.getenv("DASHBOARD_API_TOKEN", "").strip()
 CONTROL_FILE = Path("control.json")
 PENDING_FILE = Path("pending_signals.json")
 WEB_ROOT = Path(__file__).resolve().parent.parent
+BOT_LOG_FILE = WEB_ROOT / "bot.log"
 
 
 def _load_json(path: Path, fallback):
@@ -301,6 +303,18 @@ def build_dashboard_snapshot(city_key: str, date_str: str) -> dict:
     return asyncio.run(_build_dashboard_snapshot_async(city_key, date_str))
 
 
+def _tail_file_lines(path: Path, n: int) -> list[str]:
+    if n <= 0:
+        return []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            return list(deque((line.rstrip("\n") for line in f), maxlen=n))
+    except FileNotFoundError:
+        return []
+    except Exception:
+        return []
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "WeatherDashboardAPI/1.0"
 
@@ -383,6 +397,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True, "data": data})
             except Exception as e:
                 return self._json(400, {"ok": False, "error": str(e)})
+        if path == "/api/dashboard/logs":
+            q = parse_qs(parsed.query)
+            try:
+                n = int((q.get("lines") or ["120"])[0])
+            except Exception:
+                n = 120
+            n = max(20, min(n, 500))
+            return self._json(
+                200,
+                {
+                    "ok": True,
+                    "data": {
+                        "source": str(BOT_LOG_FILE),
+                        "lines": _tail_file_lines(BOT_LOG_FILE, n),
+                    },
+                },
+            )
         if path == "/api/config":
             config.refresh_runtime_overrides()
             return self._json(

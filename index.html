@@ -327,7 +327,6 @@ const EXEC_CONFIG={
 const $=id=>document.getElementById(id);
 function log(m,c=""){const el=$("log"),t=new Date().toLocaleTimeString();el.innerHTML=`<div class="${c}">[${t}] ${m}</div>`+el.innerHTML;while(el.children.length>40)el.removeChild(el.lastChild)}
 
-const PX=[u=>"https://api.allorigins.win/raw?"+new URLSearchParams({url:u}),u=>"https://corsproxy.io/?"+encodeURIComponent(u),u=>u];
 let API_BASE=localStorage.getItem("wt_api_base")||"";
 let API_TOKEN=localStorage.getItem("wt_api_token")||"";
 let ACTIVE_MARKET_BRACKETS={};
@@ -806,25 +805,19 @@ let ALL_DATES=generateDates().map(buildDateConfig);
 let LIVE_MARKETS={};
 
 async function discoverMarkets(){
-  const candidates=generateDates().map(buildDateConfig);
-  const probes=candidates.map(async dc=>{
-    for(const fetcher of [u=>u,...PX]){
-      try{
-        const url=typeof fetcher==='function'?fetcher(dc.polyUrl):dc.polyUrl;
-        const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
-        if(!r.ok)continue;
-        const d=JSON.parse(await r.text());
-        const ev=Array.isArray(d)?d[0]:d;
-        if(ev&&ev.markets&&ev.markets.length>0){
-          LIVE_MARKETS[dc.dateStr]={exists:true,active:ev.active,closed:ev.closed};
-          return{...dc,marketExists:true,active:ev.active,closed:ev.closed};
-        }
-      }catch(e){}
-    }
-    return{...dc,marketExists:false};
-  });
-  const settled=await Promise.all(probes);
-  ALL_DATES=settled.filter(dc=>dc.marketExists);
+  try{
+    const payload=await apiGet(`/api/dashboard/markets?city=${encodeURIComponent(CITY.polyCity)}`);
+    const dates=Array.isArray(payload?.dates)?payload.dates:[];
+    LIVE_MARKETS={};
+    ALL_DATES=dates.map(x=>{
+      const dc=buildDateConfig(x.date_str);
+      LIVE_MARKETS[dc.dateStr]={exists:true,active:!!x.active,closed:!!x.closed};
+      return {...dc,marketExists:true,active:!!x.active,closed:!!x.closed};
+    });
+  }catch(e){
+    log("Market discovery API failed: "+e.message,"le");
+    ALL_DATES=[];
+  }
   if(!ALL_DATES.length){ALL_DATES=[buildDateConfig(new Date().toISOString().split("T")[0])];log("No markets found — fallback to today","lw")}
   if(!ALL_DATES.find(dc=>dc.dateStr===ACTIVE_DATE.dateStr)){
     const today=new Date().toISOString().split("T")[0];
@@ -912,191 +905,55 @@ function mapToLabels(distByDeg){
 // ══════════════════════════════════════════════════════════
 // FETCH FUNCTIONS (all parameterized by CITY)
 // ══════════════════════════════════════════════════════════
-async function fetchEnsemble(){
+async function fetchDashboardSnapshot(){
   try{
-    const url=`https://ensemble-api.open-meteo.com/v1/ensemble?latitude=${CITY.lat}&longitude=${CITY.lon}&hourly=temperature_2m&models=${CITY.ensembleModels}&forecast_days=7&timezone=${CITY.tz}`;
-    const r=await fetch(url,{signal:AbortSignal.timeout(15000)});
-    if(!r.ok)throw new Error("HTTP "+r.status);
-    const d=await r.json(),hourly=d.hourly||{},times=hourly.time||[];
-    const memberKeys=Object.keys(hourly).filter(k=>k.startsWith("temperature_2m_member"));
-    if(!memberKeys.length)throw new Error("No ensemble members");
-    const targetIdx=[];
-    for(let i=0;i<times.length;i++){if(times[i]&&times[i].startsWith(ACTIVE_DATE.ensDatePrefix))targetIdx.push(i)}
-    if(!targetIdx.length)throw new Error("No "+ACTIVE_DATE.displayShort+" data");
-    const maxTemps=[],modelVotesPerDeg={};
-    for(const mk of memberKeys){
-      const vals=hourly[mk];let mx=-999;
-      for(const i of targetIdx){if(vals[i]!=null&&vals[i]>mx)mx=vals[i]}
-      if(mx>-999){
-        const mktTemp=ensToMarket(mx); // convert to market units
-        maxTemps.push(mktTemp);
-        let model="x";
-        if(mk.includes("ecmwf_ifs"))model="ifs";else if(mk.includes("ecmwf_aifs"))model="aifs";
-        else if(mk.includes("icon"))model="ico";else if(mk.includes("gem"))model="gem";
-        else if(mk.includes("ukmo"))model="ukmo";else if(mk.includes("bom"))model="bom";
-        else if(mk.includes("gfs")||mk.includes("ncep"))model="gfs";
-        const rd=Math.round(mktTemp);
-        if(!modelVotesPerDeg[rd])modelVotesPerDeg[rd]={};
-        modelVotesPerDeg[rd][model]=true;
-      }
-    }
-    // If city has a synthetic model (e.g. KMA for Seoul), fetch deterministic forecast & add synthetic members
-    if(CITY.syntheticModel){
-      try{
-        const sUrl=`https://api.open-meteo.com/v1/forecast?latitude=${CITY.lat}&longitude=${CITY.lon}&daily=temperature_2m_max&models=${CITY.syntheticModel}&forecast_days=7&timezone=${CITY.tz}`;
-        const sR=await fetch(sUrl,{signal:AbortSignal.timeout(10000)});
-        if(sR.ok){
-          const sD=await sR.json(),sDates=sD.daily?.time||[],sMaxes=sD.daily?.temperature_2m_max||[];
-          const sIdx=sDates.indexOf(ACTIVE_DATE.dateStr);
-          if(sIdx>=0&&sMaxes[sIdx]!=null){
-            const synT=ensToMarket(sMaxes[sIdx]); // °C → market units
-            // Add 10 synthetic members with tiny noise around the forecast
-            for(let i=0;i<10;i++){
-              const jitter=(Math.random()-0.5)*0.6; // ±0.3° noise
-              const t=synT+jitter;
-              maxTemps.push(t);
-              const rd=Math.round(t);
-              if(!modelVotesPerDeg[rd])modelVotesPerDeg[rd]={};
-              modelVotesPerDeg[rd]["kma"]=true;
-            }
-            log("KMA synthetic: "+synT.toFixed(1)+unitLabel()+" (10 members)","lo");
-          }
-        }
-      }catch(e){log("KMA synthetic: "+e.message,"le")}
-    }
-    window._modelAgreement={};
-    for(const[deg,models] of Object.entries(modelVotesPerDeg))window._modelAgreement[parseInt(deg)]=Object.keys(models).length;
-    // Build raw distribution in market units
-    const range=bracketRange();
-    const rawCounts={};
-    for(let i=range.min;i<=range.max;i++)rawCounts[i]=0;
-    for(const t of maxTemps){const rd=Math.round(t);if(rd>=range.min&&rd<=range.max)rawCounts[rd]++}
-    const total=maxTemps.length;
-    const rawByDeg={};
-    for(let i=range.min;i<=range.max;i++){if(rawCounts[i]>0)rawByDeg[i]=rawCounts[i]/total}
-    rawProbs=mapToLabels(rawByDeg);
-    ensMean=maxTemps.reduce((s,v)=>s+v,0)/total;ensCount=total;
-    const corrByDeg=biasCorrect(rawByDeg);
-    corrProbs=mapToLabels(corrByDeg);
-    $("ensMean").textContent=ensMean.toFixed(1)+unitLabel();
-    $("ensSrc").textContent=ensCount+" members · live";
-    log("Ensemble: "+ensCount+" members, mean "+ensMean.toFixed(1)+unitLabel(),"lo");
-  }catch(e){
-    log("Ensemble: "+e.message,"le");
-    rawProbs={};corrProbs={};ensMean=0;ensCount=0;
-    $("ensMean").textContent="—";$("ensSrc").textContent="error";
-  }
-}
+    const snap=await apiGet(`/api/dashboard/snapshot?city=${encodeURIComponent(CITY.polyCity)}&date=${encodeURIComponent(ACTIVE_DATE.dateStr)}`);
+    const market=snap.market||{};
+    B=Array.isArray(market.brackets)?market.brackets:[];
+    prices=market.prices||{};
+    TOKENS=market.token_ids||{};
+    books=snap.books||{};
 
-async function fetchMetar(){
-  const metarUrl=`https://aviationweather.gov/api/data/metar?ids=${CITY.icao}&format=json&hours=72`;
-  try{
-    const r=await fetch(PX[0](metarUrl),{signal:AbortSignal.timeout(10000)});
-    if(!r.ok)throw new Error("HTTP "+r.status);
-    const d=JSON.parse(await r.text());
-    if(d.length){
-      metarTemp=d[0].temp;
+    const ens=snap.ensemble||{};
+    rawProbs=ens.raw_probs||{};
+    corrProbs=ens.corrected_probs||{};
+    ensMean=Number(ens.mean||0);
+    ensCount=Number(ens.count||0);
+    window._modelAgreement=ens.model_agreement||{};
+    $("ensMean").textContent=ensCount?ensMean.toFixed(1)+unitLabel():"—";
+    $("ensSrc").textContent=ensCount?`${ensCount} members · backend`:"error";
+
+    const met=snap.metar||{};
+    metarTemp=typeof met.current_temp_c==="number"?met.current_temp_c:null;
+    metarHigh=typeof met.day_high_c==="number"?met.day_high_c:null;
+    metarDayMax=met.day_high_market==null?null:met.day_high_market;
+    if(metarTemp!=null){
       const displayTemp=CITY.unit==="F"?cToF(metarTemp).toFixed(0)+"°F":metarTemp+"°C";
       $("curT").textContent=displayTemp;
-      $("curTs").textContent="METAR "+d[0].rawOb.substring(5,16);
-      // Filter by LOCAL date using obsTime (timezone-aware)
-      const dayObs=d.filter(m=>ACTIVE_DATE.metarLocalDateFilter(m.obsTime));
-      if(dayObs.length){
-        const mxC=Math.max(...dayObs.map(m=>m.temp));
-        metarHigh=mxC;metarDayMax=CITY.unit==="F"?Math.round(cToF(mxC)):mxC;
-        $("dH").textContent=(CITY.unit==="F"?Math.round(cToF(mxC))+"°F":mxC+"°C");
-        $("dHs").textContent="METAR max "+ACTIVE_DATE.displayShort;
-      }
-      log("METAR: "+displayTemp,"lo");
+    }else{$("curT").textContent="—"}
+    const latestRaw=String(met.latest_raw||"");
+    if(latestRaw.toLowerCase().includes("open-meteo"))$("curTs").textContent="Open-Meteo (not METAR)";
+    else if(latestRaw)$("curTs").textContent="METAR "+latestRaw.substring(5,16);
+    else $("curTs").textContent="METAR unavailable";
+    if(metarDayMax!=null){
+      $("dH").textContent=CITY.unit==="F"?`${Math.round(metarDayMax)}°F`:`${metarDayMax}°C`;
+      $("dHs").textContent="METAR max "+ACTIVE_DATE.displayShort;
+    }else{
+      $("dH").textContent="—";
+      $("dHs").textContent=ACTIVE_DATE.isToday?"Awaiting data":(ACTIVE_DATE.isPast?"Loading...":"Forecast only");
     }
+
+    const gas=snap.gas||{};
+    if(typeof gas.gas_usd==="number")gasCostUsd=gas.gas_usd;
+    if(typeof gas.pol_usd==="number")polPrice=gas.pol_usd;
+
+    log(`Snapshot API: ${CITY.name} ${ACTIVE_DATE.displayShort} (${B.length} brackets)`,"lo");
   }catch(e){
-    try{
-      const r2=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${CITY.lat}&longitude=${CITY.lon}&current=temperature_2m&timezone=${CITY.tz}`,{signal:AbortSignal.timeout(8000)});
-      const d2=await r2.json();
-      if(d2.current){metarTemp=d2.current.temperature_2m;const dt=CITY.unit==="F"?cToF(metarTemp).toFixed(0)+"°F":metarTemp+"°C";$("curT").textContent=dt;$("curTs").textContent="Open-Meteo (not METAR)"}
-      log("METAR failed, using Open-Meteo","lw");
-    }catch(e2){log("Weather: "+e2.message,"le")}
+    B=[];prices={};TOKENS={};books={};
+    rawProbs={};corrProbs={};ensMean=0;ensCount=0;
+    $("ensMean").textContent="—";$("ensSrc").textContent="error";
+    log("Snapshot API: "+e.message,"le");
   }
-}
-
-async function fetchPoly(){
-  const order=[pxi,...[0,1,2].filter(i=>i!==pxi)];
-  const cacheBust=Date.now(); // prevent proxy caching across cities
-  for(const idx of order){
-    try{
-      const baseUrl=PX[idx](ACTIVE_DATE.polyUrl);
-      const sep=baseUrl.includes("?")?"%26":"?";
-      const url=baseUrl+(idx>0?sep+"_t="+cacheBust:""); // add cache-buster for proxies
-      const r=await fetch(url,{signal:AbortSignal.timeout(10000)});
-      if(!r.ok)throw new Error("HTTP "+r.status);
-      const d=JSON.parse(await r.text()),ev=Array.isArray(d)?d[0]:d;
-      if(!ev||!ev.markets)throw new Error("No markets");
-      const p={},tk={},bracketLabels=[];
-      for(const m of ev.markets){
-        const nm=m.groupItemTitle||"";if(!nm)continue;
-        let op;try{op=JSON.parse(m.outcomePrices||"[]")}catch(e){continue}
-        if(op[0])p[nm]=parseFloat(op[0]);
-        try{const tids=JSON.parse(m.clobTokenIds||"[]");if(tids[0])tk[nm]=tids[0]}catch(e){}
-        bracketLabels.push(nm);
-      }
-      if(!Object.keys(p).length)throw new Error("Empty");
-      // Validate: check slug in response matches expected city
-      const evSlug=ev.slug||"";
-      if(evSlug&&!evSlug.includes(CITY.polyCity)){
-        log("Poly: slug mismatch! Got "+evSlug+", expected "+CITY.polyCity,"le");
-        throw new Error("Slug mismatch");
-      }
-      prices=p;
-      // Sort brackets by their temperature value
-      bracketLabels.sort((a,b)=>{
-        const pa=parseBracket(a),pb=parseBracket(b);
-        const va=pa?(pa.val??pa.low??pa.high??0):0;
-        const vb=pb?(pb.val??pb.low??pb.high??0):0;
-        return va-vb;
-      });
-      B=bracketLabels;
-      if(Object.keys(tk).length){TOKENS=tk;log("Token IDs: "+Object.keys(tk).length+" brackets","lo")}
-      pxi=idx;log("Prices: "+B.length+" brackets via proxy "+idx+" ("+CITY.name+")","lo");return;
-    }catch(e){log("Proxy "+idx+": "+e.message,"le")}
-  }
-  // All proxies failed - ensure brackets are cleared
-  B=[];prices={};TOKENS={};
-  log("Poly: all proxies failed for "+CITY.name+" "+ACTIVE_DATE.displayShort,"le");
-}
-
-async function fetchBooks(){
-  if(!Object.keys(TOKENS).length){log("No token IDs — skipping books","lw");return}
-  let ok=0;
-  for(const[name,tid] of Object.entries(TOKENS)){
-    try{
-      const url=`https://clob.polymarket.com/book?token_id=${tid}`;
-      const r=await fetch(url,{signal:AbortSignal.timeout(8000)});if(!r.ok)continue;
-      const d=await r.json();
-      const bids=(d.bids||[]).sort((a,b)=>parseFloat(b.price)-parseFloat(a.price));
-      const asks=(d.asks||[]).sort((a,b)=>parseFloat(a.price)-parseFloat(b.price));
-      const bb=bids.length?parseFloat(bids[0].price):0;
-      const ba=asks.length?parseFloat(asks[0].price):1;
-      books[name]={bids,asks,bb,ba,mid:(bb+ba)/2,spd:ba-bb,spdPct:(bb+ba)>0?(ba-bb)/((bb+ba)/2)*100:0,
-        bidD:bids.reduce((s,x)=>s+parseFloat(x.size),0),askD:asks.reduce((s,x)=>s+parseFloat(x.size),0),
-        last:parseFloat(d.last_trade_price||0)};
-      ok++;
-    }catch(e){}
-  }
-  if(ok)log("Books: "+ok+"/"+Object.keys(TOKENS).length,"lo");
-}
-
-async function fetchGas(){
-  try{
-    const[gR,pR]=await Promise.all([
-      fetch("https://gasstation.polygon.technology/v2",{signal:AbortSignal.timeout(5000)}),
-      fetch("https://api.coingecko.com/api/v3/simple/price?ids=polygon-ecosystem-token&vs_currencies=usd",{signal:AbortSignal.timeout(5000)})
-    ]);
-    const g=await gR.json(),pp=await pR.json();
-    const totalGwei=g.estimatedBaseFee+g.standard.maxPriorityFee;
-    polPrice=pp['polygon-ecosystem-token']?.usd||0.35;
-    gasCostUsd=200000*totalGwei/1e9*polPrice;
-    log("Gas: $"+gasCostUsd.toFixed(4)+"/trade","lo");
-  }catch(e){gasCostUsd=0.03;log("Gas: fallback $0.03","lw")}
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1323,6 +1180,12 @@ function render(){
 let _marketsDiscovered=false;
 async function refresh(){
   $("badge").textContent="Refreshing...";
+  await refreshSummary(false);
+  if(!API_CONNECTED){
+    log("Dashboard API offline — cannot refresh snapshot","le");
+    cd=RS;
+    return;
+  }
   if(!_marketsDiscovered){
     try{await Promise.race([discoverMarkets(),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),10000))])}
     catch(e){
@@ -1337,11 +1200,7 @@ async function refresh(){
     _marketsDiscovered=true;renderDateTabs();
   }
   $("hdrTitle").innerHTML=CITY.name+" High Temp <span>· "+ACTIVE_DATE.display+"</span>";
-  // Fetch Poly first (gets brackets + token IDs), then ensemble (needs brackets for range)
-  await fetchPoly();
-  await Promise.all([fetchEnsemble(),fetchMetar(),fetchGas()]);
-  await fetchBooks();
-  await refreshSummary(false);
+  await fetchDashboardSnapshot();
   render();cd=RS;
 }
 

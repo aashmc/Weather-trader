@@ -8,13 +8,18 @@ import json
 import logging
 import mimetypes
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.parse import parse_qs
 
+import httpx
 import config
+from ensemble import fetch_ensemble, bias_correct, map_to_brackets
 from market import fetch_wallet_balance
+from market import fetch_market, fetch_all_books, build_slug, GAMMA_API
+from metar import fetch_metar
 from risk import get_portfolio_summary, get_state
 
 logging.basicConfig(
@@ -115,6 +120,187 @@ def build_summary() -> dict:
     }
 
 
+def _safe_city_key(raw: str) -> str:
+    key = (raw or "").strip().lower()
+    if key not in config.CITIES:
+        raise ValueError(f"invalid city '{raw}'")
+    return key
+
+
+def _safe_date(raw: str) -> str:
+    try:
+        d = datetime.strptime((raw or "").strip(), "%Y-%m-%d")
+        return d.strftime("%Y-%m-%d")
+    except Exception:
+        raise ValueError(f"invalid date '{raw}' (expected YYYY-MM-DD)")
+
+
+def _book_to_dashboard_shape(book: dict) -> dict:
+    bb = float(book.get("bb", 0.0))
+    ba = float(book.get("ba", 1.0))
+    spread = float(book.get("spread", max(0.0, ba - bb)))
+    bid_depth = float(book.get("bid_depth", 0.0))
+    ask_depth = float(book.get("ask_depth", 0.0))
+    bids = book.get("bids", []) or []
+    asks = book.get("asks", []) or []
+    return {
+        "bb": bb,
+        "ba": ba,
+        "mid": (bb + ba) / 2.0,
+        "spd": spread,
+        "spdPct": ((spread / ((bb + ba) / 2.0)) * 100.0) if (bb + ba) > 0 else 0.0,
+        "bidD": bid_depth,
+        "askD": ask_depth,
+        "last": float(book.get("last_trade_price", 0.0) or 0.0),
+        "bids": bids,
+        "asks": asks,
+    }
+
+
+async def _fetch_gas_estimate() -> dict:
+    # Same rough estimate used by dashboard-side logic.
+    gas_url = "https://gasstation.polygon.technology/v2"
+    pol_url = (
+        "https://api.coingecko.com/api/v3/simple/price"
+        "?ids=polygon-ecosystem-token&vs_currencies=usd"
+    )
+    gas_usd = 0.03
+    pol_usd = 0.35
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            gas_r, pol_r = await asyncio.gather(
+                client.get(gas_url),
+                client.get(pol_url),
+            )
+        gas_r.raise_for_status()
+        pol_r.raise_for_status()
+        gas = gas_r.json()
+        pol = pol_r.json()
+        base = float(gas.get("estimatedBaseFee", 0.0))
+        prio = float((gas.get("standard") or {}).get("maxPriorityFee", 0.0))
+        pol_usd = float((pol.get("polygon-ecosystem-token") or {}).get("usd", pol_usd))
+        total_gwei = base + prio
+        gas_usd = 200000 * total_gwei / 1e9 * pol_usd
+    except Exception:
+        pass
+    return {"gas_usd": float(gas_usd), "pol_usd": float(pol_usd)}
+
+
+async def _discover_city_markets_async(city_key: str) -> dict:
+    city = config.CITIES[city_key]
+    today = datetime.now(timezone.utc).date()
+    dates = []
+    async with httpx.AsyncClient(timeout=10) as client:
+        for offset in range(-3, 2):
+            d = today + timedelta(days=offset)
+            date_str = d.strftime("%Y-%m-%d")
+            slug = build_slug(city, date_str)
+            url = f"{GAMMA_API}?slug={slug}"
+            try:
+                r = await client.get(url)
+                r.raise_for_status()
+                payload = r.json()
+                if not payload:
+                    continue
+                event = payload[0] if isinstance(payload, list) else payload
+                markets = event.get("markets") or []
+                if not markets:
+                    continue
+                dates.append(
+                    {
+                        "date_str": date_str,
+                        "active": bool(event.get("active", False)),
+                        "closed": bool(event.get("closed", False)),
+                        "slug": slug,
+                    }
+                )
+            except Exception:
+                continue
+    return {"city": city_key, "dates": dates}
+
+
+def discover_city_markets(city_key: str) -> dict:
+    return asyncio.run(_discover_city_markets_async(city_key))
+
+
+async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
+    city = config.CITIES[city_key]
+    market = await fetch_market(city, date_str)
+    brackets = market.get("brackets", [])
+    prices = market.get("prices", {})
+    token_ids = market.get("token_ids", {})
+
+    ensemble_task = fetch_ensemble(city, date_str)
+    metar_task = fetch_metar(city, date_str)
+    books_task = fetch_all_books(token_ids)
+    gas_task = _fetch_gas_estimate()
+    ensemble_res, metar_res, books_res, gas_res = await asyncio.gather(
+        ensemble_task,
+        metar_task,
+        books_task,
+        gas_task,
+        return_exceptions=True,
+    )
+
+    if isinstance(ensemble_res, Exception):
+        raise ensemble_res
+    ensemble_data = ensemble_res
+
+    raw_probs = map_to_brackets(ensemble_data["raw_dist"], brackets)
+    corrected_dist = bias_correct(
+        ensemble_data["raw_dist"], city["bias_mean"], city["bias_sd"]
+    )
+    corrected_probs = map_to_brackets(corrected_dist, brackets)
+
+    if isinstance(metar_res, Exception):
+        metar_data = {
+            "current_temp_c": None,
+            "day_high_c": None,
+            "day_high_market": None,
+            "observation_count": 0,
+            "latest_raw": "",
+        }
+    else:
+        metar_data = metar_res
+
+    books_raw = {} if isinstance(books_res, Exception) else books_res
+    books = {
+        label: _book_to_dashboard_shape(book)
+        for label, book in (books_raw or {}).items()
+    }
+
+    gas_data = {"gas_usd": 0.03, "pol_usd": 0.35} if isinstance(gas_res, Exception) else gas_res
+
+    return {
+        "city": city_key,
+        "date": date_str,
+        "market": {
+            "slug": market.get("slug"),
+            "active": bool(market.get("active", True)),
+            "resolved": bool(market.get("resolved", False)),
+            "winner": market.get("winner"),
+            "brackets": [b["label"] for b in brackets],
+            "prices": prices,
+            "token_ids": token_ids,
+        },
+        "books": books,
+        "ensemble": {
+            "mean": float(ensemble_data.get("mean", 0.0)),
+            "count": int(ensemble_data.get("count", 0)),
+            "raw_probs": raw_probs,
+            "corrected_probs": corrected_probs,
+            "model_agreement": ensemble_data.get("model_votes", {}),
+            "family_agreement": ensemble_data.get("family_votes", {}),
+        },
+        "metar": metar_data,
+        "gas": gas_data,
+    }
+
+
+def build_dashboard_snapshot(city_key: str, date_str: str) -> dict:
+    return asyncio.run(_build_dashboard_snapshot_async(city_key, date_str))
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "WeatherDashboardAPI/1.0"
 
@@ -165,7 +351,8 @@ class Handler(BaseHTTPRequestHandler):
         self._set_headers(204)
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
 
         # Serve dashboard static page from the same service/origin.
         # This avoids cross-origin/API-base issues for users.
@@ -179,6 +366,23 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True, "ts": datetime.now(timezone.utc).isoformat()})
         if path == "/api/summary":
             return self._json(200, {"ok": True, "data": build_summary()})
+        if path == "/api/dashboard/markets":
+            try:
+                q = parse_qs(parsed.query)
+                city_key = _safe_city_key((q.get("city") or [""])[0])
+                data = discover_city_markets(city_key)
+                return self._json(200, {"ok": True, "data": data})
+            except Exception as e:
+                return self._json(400, {"ok": False, "error": str(e)})
+        if path == "/api/dashboard/snapshot":
+            try:
+                q = parse_qs(parsed.query)
+                city_key = _safe_city_key((q.get("city") or [""])[0])
+                date_str = _safe_date((q.get("date") or [""])[0])
+                data = build_dashboard_snapshot(city_key, date_str)
+                return self._json(200, {"ok": True, "data": data})
+            except Exception as e:
+                return self._json(400, {"ok": False, "error": str(e)})
         if path == "/api/config":
             config.refresh_runtime_overrides()
             return self._json(

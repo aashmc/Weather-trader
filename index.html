@@ -9,14 +9,14 @@
 :root{--bg:#ffffff;--sf:#f8f8fa;--sf2:#f0f0f4;--bd:#e4e4e8;--tx:#1a1a2e;--dm:#8888a0;--dm2:#a0a0b4;--gn:#16a34a;--gn2:rgba(22,163,74,.05);--rd:#dc2626;--rd2:rgba(220,38,38,.05);--am:#b45309;--h1:#4a86c8;--h2:#16a34a;--h3:rgba(26,26,46,.1)}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,sans-serif;min-height:100vh;display:flex}
-.sidebar{width:160px;min-height:100vh;background:var(--sf);border-right:1px solid var(--bd);padding:16px 0;flex-shrink:0;position:sticky;top:0;height:100vh}
+.sidebar{width:180px;min-height:100vh;background:var(--sf);border-right:1px solid var(--bd);padding:16px 0;flex-shrink:0;position:sticky;top:0;height:100vh}
 .sb-title{font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:500;text-transform:uppercase;letter-spacing:1.5px;color:var(--dm2);padding:0 14px;margin-bottom:10px}
 .sb-item{display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:500;color:var(--dm);transition:all .15s;border-left:2px solid transparent}
 .sb-item:hover{color:var(--tx);background:var(--sf2)}
 .sb-item.active{color:var(--tx);background:var(--sf2);border-left-color:var(--tx)}
 .sb-flag{font-size:14px}
 .sb-meta{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm2);margin-top:1px}
-.main{flex:1;padding:20px;max-width:960px}
+.main{flex:1;padding:20px 24px;max-width:none}
 .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid var(--bd);padding-bottom:12px;margin-bottom:14px}
 .hdr h1{font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:500;letter-spacing:2px;color:var(--dm);text-transform:uppercase;margin-bottom:4px}
 .hdr h2{font-size:18px;font-weight:600;color:var(--tx)}.hdr h2 span{color:var(--dm2);font-weight:400}
@@ -70,6 +70,27 @@ td:first-child{text-align:left;font-weight:500;color:var(--tx)}
 .pnl-big-sub{font-size:8px;color:var(--dm2);margin-top:3px}
 .pos-w{background:rgba(22,163,74,.02)}.pos-l{opacity:.35}
 @media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.sidebar{display:none}.main{padding:12px}}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.chip{padding:5px 10px;border-radius:999px;border:1px solid var(--bd);background:var(--sf);font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm)}
+.chip b{color:var(--tx);font-weight:600}
+.chip-live{border-color:rgba(22,163,74,.2);background:rgba(22,163,74,.04);color:var(--gn)}
+.chip-pause{border-color:rgba(220,38,38,.2);background:rgba(220,38,38,.04);color:var(--rd)}
+.chip-info{border-color:rgba(74,134,200,.25);background:rgba(74,134,200,.07);color:var(--h1)}
+.ctl{display:flex;align-items:center;gap:8px}
+.sw{display:inline-flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm)}
+.sw input{display:none}
+.sw span{position:relative;width:34px;height:18px;border-radius:999px;background:var(--bd);display:inline-block;transition:.2s}
+.sw span::after{content:'';position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:.2s}
+.sw input:checked + span{background:var(--gn)}
+.sw input:checked + span::after{left:18px}
+.api-grid{display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:8px}
+.cfg-grid-min{display:grid;grid-template-columns:repeat(3,minmax(140px,1fr));gap:8px}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--dm2);text-transform:uppercase;letter-spacing:1px}
+.field input{font-family:'IBM Plex Mono',monospace;font-size:10px;padding:6px 8px;border:1px solid var(--bd);border-radius:4px;background:#fff;color:var(--tx)}
+.btn{padding:6px 12px;border-radius:4px;border:1px solid var(--bd);background:var(--sf);color:var(--tx);cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:9px}
+.btn-primary{border-color:rgba(22,163,74,.35);background:rgba(22,163,74,.08);color:var(--gn)}
+.note-active{margin-bottom:10px;border-color:rgba(74,134,200,.35);background:rgba(74,134,200,.06);color:var(--h1)}
 .cfg-grid{display:flex;flex-direction:column;gap:0}
 .cfg-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--bd);gap:12px}
 .cfg-row:last-child{border-bottom:none}
@@ -109,8 +130,26 @@ td:first-child{text-align:left;font-weight:500;color:var(--tx)}
 <div class="main" id="tradingPage">
 <div class="hdr">
 <div><h1>Weather Trader</h1><h2 id="hdrTitle">Loading... <span></span></h2></div>
-<div class="hr"><div class="lb" id="badge">Starting...</div><br><span id="stationInfo">—</span><br><span id="ut">—</span></div>
+<div class="hr">
+  <div class="ctl" style="justify-content:flex-end;margin-bottom:4px">
+    <label class="sw" title="Pause/resume live trading bot">
+      <input id="botSwitch" type="checkbox" onchange="toggleBotPause()">
+      <span></span>
+      <em id="botSwitchLabel" style="font-style:normal">Bot ON</em>
+    </label>
+  </div>
+  <div class="lb" id="badge">Starting...</div><br><span id="stationInfo">—</span><br><span id="ut">—</span>
 </div>
+</div>
+
+<div class="chips">
+  <div class="chip chip-live" id="chipBankroll">Bankroll: <b>—</b></div>
+  <div class="chip" id="chipExposure">Exposure: <b>—</b></div>
+  <div class="chip" id="chipActive">Active positions: <b>0</b></div>
+  <div class="chip" id="chipMode">Mode: <b>—</b></div>
+  <div class="chip" id="chipApi">API: <b>offline</b></div>
+</div>
+<div class="warn note-active" id="activePosNotice" style="display:none"></div>
 
 <div class="dtabs" id="dateTabs"></div>
 
@@ -148,6 +187,48 @@ td:first-child{text-align:left;font-weight:500;color:var(--tx)}
 </div>
 
 <div class="pn"><div class="pt">Log</div><div id="log"></div></div>
+
+<div class="pn">
+<div class="pt">Live Control</div>
+<div class="api-grid">
+  <div class="field">
+    <label>API Base URL</label>
+    <input id="apiBase" placeholder="http://178.62.253.211:8090">
+  </div>
+  <div class="field">
+    <label>API Token</label>
+    <input id="apiToken" type="password" placeholder="x-api-key">
+  </div>
+  <div class="field">
+    <label>Actions</label>
+    <div style="display:flex;gap:6px">
+      <button class="btn" onclick="saveApiSettings()">Save</button>
+      <button class="btn btn-primary" onclick="refreshSummary(true)">Connect</button>
+    </div>
+  </div>
+</div>
+<div id="apiMsg" style="margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm)"></div>
+</div>
+
+<div class="pn">
+<div class="pt">Risk Parameters (Live Bot)</div>
+<div class="cfg-grid-min">
+  <div class="field"><label>Max Bet Ratio</label><input id="cfgMaxBetRatio" type="number" step="0.01" min="0" max="1"></div>
+  <div class="field"><label>Max Exposure Ratio</label><input id="cfgMaxExposureRatio" type="number" step="0.01" min="0" max="1"></div>
+  <div class="field"><label>Daily Loss Ratio</label><input id="cfgDailyLossRatio" type="number" step="0.01" min="0" max="1"></div>
+  <div class="field"><label>Min Ask Depth</label><input id="cfgMinAskDepth" type="number" step="1" min="0"></div>
+  <div class="field"><label>Max Ask Price</label><input id="cfgMaxAskPrice" type="number" step="0.01" min="0" max="1"></div>
+  <div class="field"><label>Order Timeout (sec)</label><input id="cfgOrderTimeout" type="number" step="1" min="30"></div>
+  <div class="field"><label>City Min Edge</label><input id="cfgCityMinEdge" type="number" step="0.01" min="0" max="0.5"></div>
+  <div class="field"><label>City Min Models</label><input id="cfgCityMinModels" type="number" step="1" min="1"></div>
+  <div class="field"><label>City Min Families</label><input id="cfgCityMinFamilies" type="number" step="1" min="1"></div>
+</div>
+<div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+  <button class="btn btn-primary" onclick="saveRuntimeConfig()">Save Live Config</button>
+  <span id="cfgMsg" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm)"></span>
+</div>
+</div>
+
 <div class="ft" id="footer">—</div>
 </div>
 
@@ -245,6 +326,184 @@ const $=id=>document.getElementById(id);
 function log(m,c=""){const el=$("log"),t=new Date().toLocaleTimeString();el.innerHTML=`<div class="${c}">[${t}] ${m}</div>`+el.innerHTML;while(el.children.length>40)el.removeChild(el.lastChild)}
 
 const PX=[u=>"https://api.allorigins.win/raw?"+new URLSearchParams({url:u}),u=>"https://corsproxy.io/?"+encodeURIComponent(u),u=>u];
+let API_BASE=localStorage.getItem("wt_api_base")||"";
+let API_TOKEN=localStorage.getItem("wt_api_token")||"";
+let ACTIVE_MARKET_BRACKETS={};
+let BOT_PAUSED=false;
+let RUNTIME_EFFECTIVE={};
+
+function setApiMsg(msg,isErr=false){
+  const el=$("apiMsg");if(!el)return;
+  el.textContent=msg||"";
+  el.style.color=isErr?"var(--rd)":"var(--dm)";
+}
+
+function updateTopChips(summary){
+  const cash=summary?.bankroll?.cash;
+  const exp=summary?.portfolio?.active_exposure;
+  const active=summary?.portfolio?.active_positions;
+  const key=`${cityDisplayName(CITY.name)}:${ACTIVE_DATE.dateStr}`;
+  const currentMarketActive=(summary?.active_by_market?.[key]||[]).length;
+  const mode=summary?.control?.mode||"manual";
+  BOT_PAUSED=!!summary?.control?.paused;
+  $("chipBankroll").innerHTML=`Bankroll: <b>${cash>=0?`$${Number(cash).toFixed(2)}`:"—"}</b>`;
+  $("chipExposure").innerHTML=`Exposure: <b>${typeof exp==="number"?`$${exp.toFixed(2)}`:"—"}</b>`;
+  $("chipActive").innerHTML=`Active positions: <b>${Number(active||0)}</b>${currentMarketActive?` · this market <b>${currentMarketActive}</b>`:""}`;
+  $("chipMode").innerHTML=`Mode: <b>${mode}${BOT_PAUSED?" · paused":""}</b>`;
+  $("chipMode").className=`chip ${BOT_PAUSED?"chip-pause":"chip-live"}`;
+  const sw=$("botSwitch"),lbl=$("botSwitchLabel");
+  if(sw){sw.checked=!BOT_PAUSED;lbl.textContent=BOT_PAUSED?"Bot OFF":"Bot ON"}
+}
+
+function setApiConnected(ok){
+  const el=$("chipApi");
+  el.innerHTML=`API: <b>${ok?"connected":"offline"}</b>`;
+  el.className=`chip ${ok?"chip-live":"chip"}`;
+}
+
+function cityDisplayName(key){
+  if(key==="NYC")return "NYC";
+  return key;
+}
+
+function activeBracketSetForCurrentMarket(){
+  const k=`${cityDisplayName(CITY.name)}:${ACTIVE_DATE.dateStr}`;
+  return new Set(ACTIVE_MARKET_BRACKETS[k]||[]);
+}
+
+function updateActivePositionNotice(){
+  const list=Array.from(activeBracketSetForCurrentMarket());
+  const el=$("activePosNotice");
+  if(!el)return;
+  if(!list.length){
+    el.style.display="none";
+    return;
+  }
+  el.style.display="block";
+  el.innerHTML=`Active in this market: <b>${list.join(", ")}</b>. Duplicate BUY on same bracket is blocked.`;
+}
+
+function authHeaders(){
+  const h={"Content-Type":"application/json"};
+  if(API_TOKEN)h["X-API-Key"]=API_TOKEN;
+  return h;
+}
+
+async function apiGet(path){
+  if(!API_BASE)throw new Error("API base URL not set");
+  const r=await fetch(`${API_BASE}${path}`,{headers:authHeaders(),signal:AbortSignal.timeout(8000)});
+  if(!r.ok)throw new Error(`HTTP ${r.status}`);
+  const j=await r.json();
+  if(!j.ok)throw new Error(j.error||"API error");
+  return j.data;
+}
+
+async function apiPost(path,payload){
+  if(!API_BASE)throw new Error("API base URL not set");
+  const r=await fetch(`${API_BASE}${path}`,{
+    method:"POST",
+    headers:authHeaders(),
+    body:JSON.stringify(payload||{}),
+    signal:AbortSignal.timeout(8000),
+  });
+  if(!r.ok)throw new Error(`HTTP ${r.status}`);
+  const j=await r.json();
+  if(!j.ok)throw new Error(j.error||"API error");
+  return j.data;
+}
+
+function loadApiSettingsToInputs(){
+  if($("apiBase"))$("apiBase").value=API_BASE;
+  if($("apiToken"))$("apiToken").value=API_TOKEN;
+}
+
+function saveApiSettings(){
+  API_BASE=($("apiBase").value||"").trim().replace(/\/$/,"");
+  API_TOKEN=($("apiToken").value||"").trim();
+  localStorage.setItem("wt_api_base",API_BASE);
+  localStorage.setItem("wt_api_token",API_TOKEN);
+  setApiMsg("Saved API settings.");
+  refreshSummary(true);
+}
+
+function fillConfigInputs(eff){
+  if(!eff)return;
+  $("cfgMaxBetRatio").value=eff.max_bet_ratio ?? "";
+  $("cfgMaxExposureRatio").value=eff.max_exposure_ratio ?? "";
+  $("cfgDailyLossRatio").value=eff.daily_loss_ratio ?? "";
+  $("cfgMinAskDepth").value=eff.min_ask_depth ?? "";
+  $("cfgMaxAskPrice").value=eff.max_ask_price ?? "";
+  $("cfgOrderTimeout").value=eff.order_timeout_seconds ?? "";
+  const cityCfg=(eff.city_thresholds||{})[CITY.polyCity]||{};
+  $("cfgCityMinEdge").value=cityCfg.min_edge ?? "";
+  $("cfgCityMinModels").value=cityCfg.min_models ?? "";
+  $("cfgCityMinFamilies").value=cityCfg.min_families ?? "";
+}
+
+async function refreshSummary(manual=false){
+  try{
+    const s=await apiGet("/api/summary");
+    ACTIVE_MARKET_BRACKETS=s.active_by_market||{};
+    RUNTIME_EFFECTIVE=s.runtime_effective||{};
+    updateTopChips(s);
+    fillConfigInputs(RUNTIME_EFFECTIVE);
+    updateActivePositionNotice();
+    if(B.length&&Object.keys(prices).length)render();
+    setApiConnected(true);
+    if(manual)setApiMsg("Connected to live bot API.");
+  }catch(e){
+    setApiConnected(false);
+    updateActivePositionNotice();
+    if(manual)setApiMsg(`API error: ${e.message}`,true);
+  }
+}
+
+async function saveRuntimeConfig(){
+  try{
+    const payload={};
+    const f=(id)=>{const n=parseFloat($(id).value);return Number.isFinite(n)?n:null};
+    const i=(id)=>{const n=parseInt($(id).value,10);return Number.isFinite(n)?n:null};
+    const put=(k,v)=>{if(v!==null)payload[k]=v};
+    put("max_bet_ratio",f("cfgMaxBetRatio"));
+    put("max_exposure_ratio",f("cfgMaxExposureRatio"));
+    put("daily_loss_ratio",f("cfgDailyLossRatio"));
+    put("min_ask_depth",i("cfgMinAskDepth"));
+    put("max_ask_price",f("cfgMaxAskPrice"));
+    put("order_timeout_seconds",i("cfgOrderTimeout"));
+    const cityOverride={};
+    const cEdge=f("cfgCityMinEdge");
+    const cModels=i("cfgCityMinModels");
+    const cFamilies=i("cfgCityMinFamilies");
+    if(cEdge!==null)cityOverride.min_edge=cEdge;
+    if(cModels!==null)cityOverride.min_models=cModels;
+    if(cFamilies!==null)cityOverride.min_families=cFamilies;
+    if(Object.keys(cityOverride).length)payload.city_overrides={[CITY.polyCity]:cityOverride};
+    const d=await apiPost("/api/config",payload);
+    RUNTIME_EFFECTIVE=d.effective||{};
+    fillConfigInputs(RUNTIME_EFFECTIVE);
+    $("cfgMsg").textContent="Saved to live bot.";
+    $("cfgMsg").style.color="var(--gn)";
+    await refreshSummary(false);
+  }catch(e){
+    $("cfgMsg").textContent=`Save failed: ${e.message}`;
+    $("cfgMsg").style.color="var(--rd)";
+  }
+}
+
+async function toggleBotPause(){
+  const sw=$("botSwitch");
+  const targetPaused=!sw.checked;
+  try{
+    await apiPost("/api/bot/pause",{paused:targetPaused});
+    BOT_PAUSED=targetPaused;
+    $("botSwitchLabel").textContent=BOT_PAUSED?"Bot OFF":"Bot ON";
+    setApiMsg(BOT_PAUSED?"Bot paused from dashboard.":"Bot resumed from dashboard.");
+    await refreshSummary(false);
+  }catch(e){
+    sw.checked=!targetPaused;
+    setApiMsg(`Bot switch failed: ${e.message}`,true);
+  }
+}
 
 // ══════════════════════════════════════════════════════════
 // UNIT HELPERS
@@ -389,6 +648,8 @@ function selectCity(key){
   // Re-initialize dates for this city
   ACTIVE_DATE=buildDateConfig(new Date().toISOString().split("T")[0]);
   ALL_DATES=generateDates().map(buildDateConfig);
+  fillConfigInputs(RUNTIME_EFFECTIVE);
+  updateActivePositionNotice();
   renderDateTabs();
   log("Switched to "+CITY.name+" ("+CITY.icao+")","lo");
   refresh();
@@ -511,6 +772,7 @@ function selectDate(dateStr){
   metarHigh=null;metarTemp=null;metarDayMax=null;
   B=[];prices={};books={};TOKENS={};rawProbs={};corrProbs={};ensMean=0;ensCount=0;
   document.querySelectorAll(".dtab").forEach(t=>t.classList.toggle("active",t.dataset.date===dateStr));
+  updateActivePositionNotice();
   refresh();
 }
 
@@ -787,6 +1049,7 @@ function render(){
   const freezeHour=Math.min(23,cutoffHour+LATE_GUARD_CONFIG.freezeHoursAfterCutoff);
   const lateApplies=LATE_GUARD_CONFIG.enabled&&localDateNow===ACTIVE_DATE.dateStr;
   const latePhase=lateApplies?(nowLocalHour>=freezeHour?"freeze":nowLocalHour>=cutoffHour?"after_cutoff":"normal"):"inactive";
+  const activeNow=activeBracketSetForCurrentMarket();
   const A=B.map(b=>{
     const rawP=rawProbs[b]||0,corP=(useRaw?rawP:corrProbs[b])||0,bk=books[b],mkt=prices[b]||0;
     const ask=bk?bk.ba:mkt,bid=bk?bk.bb:0,mid=bk?bk.mid:mkt;
@@ -854,8 +1117,13 @@ function render(){
       rawEdge,baseTrueEdge,trueEdge,edgeAfterCosts,effectiveAsk,fillFraction,immediateFillFraction,
       continuationFillProb,feePerContract,gasPerContract,slippagePenalty,executionAdjusted:EXEC_CONFIG.enabled,
       bet,ev,sig,fFull,contracts,bidD:bk?bk.bidD:0,askD:bk?bk.askD:0,last:bk?bk.last:0,modelVotes:mv,
-      isFavorite,isCandidate,latePhase,lateImpossible,observedHighText:metarDayMax==null?"—":String(metarDayMax)};
-    if(LIVE_MODE&&(sig==="BUY"||sig==="LEAN")){
+      isFavorite,isCandidate,isActive:activeNow.has(b),latePhase,lateImpossible,observedHighText:metarDayMax==null?"—":String(metarDayMax)};
+    if(row.isActive){
+      row.sig="ACTIVE";
+      row.filterReasons=["Already holding this bracket"];
+      row.bet=0;
+      row.ev=0;
+    }else if(LIVE_MODE&&(sig==="BUY"||sig==="LEAN")){
       const filt=applyFilters(row);
       if(!filt.pass){row.sig="FILTERED";row.filterReasons=filt.reasons;row.bet=0;row.ev=0}
     }
@@ -865,6 +1133,7 @@ function render(){
   // Signal banner
   const actionable=A.filter(a=>a.sig==="BUY").sort((a,b)=>b.trueEdge-a.trueEdge);
   const filtered=A.filter(a=>a.sig==="FILTERED");
+  const activeRows=A.filter(a=>a.sig==="ACTIVE");
   const best=actionable[0];
   const bn=$("sigB");
   if(best){
@@ -881,6 +1150,11 @@ function render(){
       ["⅓Kelly","$"+best.bet.toFixed(2),"var(--gn)"],
       ["E[Profit]","+$"+best.ev.toFixed(2),"var(--gn)"],
     ].map(([l,v,c])=>`<div class="si"><div class="si-l">${l}</div><div class="si-v" style="color:${c}">${v}</div></div>`).join("");
+  }else if(activeRows.length>0){
+    bn.style.borderColor="rgba(74,134,200,.25)";$("sigT").style.color="var(--h1)";
+    $("sigT").textContent="Position already active";
+    $("sigN").textContent=activeRows.map(a=>a.bracket).join(", ");
+    $("sigD").innerHTML=activeRows.map(a=>`<div style="font-size:10px;color:var(--h1);margin:2px 0">${a.bracket}: already in portfolio for ${CITY.name} ${ACTIVE_DATE.displayShort}</div>`).join("");
   }else if(filtered.length>0){
     bn.style.borderColor="var(--bd)";$("sigT").style.color="var(--dm)";
     $("sigT").textContent=filtered.length+" signal(s) filtered by live-mode rules";
@@ -894,12 +1168,13 @@ function render(){
   // Main table
   let h="",tB=0,tE=0;
   for(const a of A){
-    const hl=a.sig==="BUY"||a.sig==="LEAN";
+    const hl=a.sig==="BUY"||a.sig==="LEAN"||a.sig==="ACTIVE";
     const isF=a.sig==="FILTERED";
     const tec=a.trueEdge>.03?"var(--gn)":a.trueEdge>0?"rgba(22,163,74,.5)":a.trueEdge<-.03?"var(--rd)":"var(--dm)";
     let tg;
     if(a.sig==="BUY")tg='<span class="tb tb-b">BUY</span>';
     else if(a.sig==="LEAN")tg='<span class="tb tb-l">LEAN</span>';
+    else if(a.sig==="ACTIVE")tg='<span class="tb" style="background:rgba(74,134,200,.09);color:var(--h1)">ACTIVE</span>';
     else if(isF)tg='<span style="color:#ff9800;font-size:8px;padding:2px 5px;border-radius:3px;background:rgba(255,152,0,.08)">BLOCKED</span>';
     else tg='<span style="color:var(--dm);font-size:9px">—</span>';
     if(a.bet>0){tB+=a.bet;tE+=a.ev}
@@ -907,7 +1182,7 @@ function render(){
     const mvPct=totalModels>0?a.modelVotes/totalModels:0;
     const mvC=mvPct>=0.75?"var(--gn)":mvPct>=0.5?"var(--am)":"var(--rd)";
     const ft=isF&&a.filterReasons?` title="${a.filterReasons.join('; ')}"`:"";
-    h+=`<tr class="${hl?"rh":""}"${ft}><td>${a.bracket}</td>
+    h+=`<tr class="${hl?"rh":""} ${a.isActive?"pos-w":""}"${ft}><td>${a.bracket}</td>
     <td style="text-align:center">${tg}</td>
     <td style="color:var(--dm)">${(a.rawP*100).toFixed(1)}%</td>
     <td style="color:var(--tx);font-weight:500">${(a.corP*100).toFixed(1)}%</td>
@@ -917,14 +1192,14 @@ function render(){
     <td style="color:${a.rawEdge>0?"rgba(22,163,74,.5)":"var(--dm)"}">${a.rawEdge>=0?"+":""}${(a.rawEdge*100).toFixed(1)}</td>
     <td style="color:${tec};font-weight:700">${a.trueEdge>=0?"+":""}${(a.trueEdge*100).toFixed(1)}</td>
     <td style="color:${mvC};font-size:10px">${a.modelVotes}/${CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0)}</td>
-    <td style="color:${a.bet>0?"var(--gn)":"var(--dm)"}">${a.bet>0?"$"+a.bet.toFixed(2):"—"}</td>
+    <td style="color:${a.bet>0?"var(--gn)":a.isActive?"var(--h1)":"var(--dm)"}">${a.bet>0?"$"+a.bet.toFixed(2):a.isActive?"HOLD":"—"}</td>
     <td style="color:${a.ev>0?"var(--gn)":"var(--dm)"}">${a.ev>0?"+$"+a.ev.toFixed(2):"—"}</td></tr>`;
   }
   $("tbl").innerHTML=h;
   const feeLabel=(EXEC_CONFIG.feeRate*100).toFixed(2)+"%";
   $("totals").innerHTML=tB>0?
     `<span>Wagered: <b>$${tB.toFixed(2)}</b></span><span>E[Profit]: <b style="color:var(--gn)">+$${tE.toFixed(2)}</b></span><span>E[ROI]: <b style="color:var(--gn)">+${((tE/tB)*100).toFixed(0)}%</b></span><span style="color:var(--dm)">Gas est: $${gasCostUsd.toFixed(3)} | Fee: ${feeLabel}</span>`:
-    '<span style="color:var(--dm)">No positions after analysis</span>';
+    (activeRows.length?`<span style="color:var(--h1)">Holding ${activeRows.length} active bracket(s) in this market; no duplicate buys.</span>`:'<span style="color:var(--dm)">No positions after analysis</span>');
 
   // Histogram
   const vis=B.filter(b=>(rawProbs[b]||0)>.001||(corrProbs[b]||0)>.001||(prices[b]||0)>.01);
@@ -963,6 +1238,7 @@ function render(){
     et.style.color=col;et.style.borderColor=col;et.style.background=bg;et.textContent=msg;
   }else{et.style.display="none"}
   $("stopLossWarn").style.display="none";
+  updateActivePositionNotice();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -989,13 +1265,18 @@ async function refresh(){
   await fetchPoly();
   await Promise.all([fetchEnsemble(),fetchMetar(),fetchGas()]);
   await fetchBooks();
+  await refreshSummary(false);
   render();cd=RS;
 }
 
 // INIT
+loadApiSettingsToInputs();
+setApiConnected(false);
+updateActivePositionNotice();
 renderCityNav();
 selectCity("london"); // default
 setInterval(()=>{cd--;$("badge").textContent="Auto-refresh "+cd+"s";if(cd<=0)refresh()},1000);
+setInterval(()=>refreshSummary(false),15000);
 </script>
 </body>
 </html>

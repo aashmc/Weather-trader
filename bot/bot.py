@@ -909,6 +909,7 @@ async def run_cycle():
 
     # Poll Telegram commands first
     await poll_telegram_commands()
+    config.refresh_runtime_overrides()
 
     dry_run = is_dry_run()
     paused = is_paused()
@@ -1002,6 +1003,7 @@ async def main():
         save_control({"mode": "dryrun", "paused": False})
 
     ctrl = load_control()
+    config.refresh_runtime_overrides(force=True)
     mode_map = {"dryrun": "🧪 DRY RUN", "manual": "👆 MANUAL", "auto": "🔴 AUTO"}
     mode = mode_map.get(ctrl.get("mode", "dryrun"), "🧪 DRY RUN")
 

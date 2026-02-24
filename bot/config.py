@@ -3,7 +3,10 @@ Weather Trader Bot — Configuration
 All city configs, trading thresholds, and bias correction parameters.
 """
 
+import json
 import os
+from copy import deepcopy
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -272,6 +275,171 @@ for city_cfg in CITIES.values():
         city_cfg.get("min_families", city_cfg["min_models"]),
         city_cfg["total_families"],
     )
+
+# ══════════════════════════════════════════════════════
+# RUNTIME OVERRIDES (editable from dashboard API)
+# ══════════════════════════════════════════════════════
+RUNTIME_OVERRIDES_FILE = Path(
+    os.getenv("RUNTIME_OVERRIDES_FILE", "runtime_overrides.json")
+)
+
+_BASE_GLOBALS = {
+    "MAX_BET_RATIO": MAX_BET_RATIO,
+    "MAX_EXPOSURE_RATIO": MAX_EXPOSURE_RATIO,
+    "DAILY_LOSS_RATIO": DAILY_LOSS_RATIO,
+    "MIN_ASK_DEPTH": MIN_ASK_DEPTH,
+    "MAX_ASK_PRICE": MAX_ASK_PRICE,
+    "ORDER_TIMEOUT_SECONDS": ORDER_TIMEOUT_SECONDS,
+}
+_BASE_CITY_THRESHOLDS = {
+    city_key: {
+        "min_models": cfg.get("min_models"),
+        "min_edge": cfg.get("min_edge"),
+        "min_families": cfg.get("min_families"),
+    }
+    for city_key, cfg in CITIES.items()
+}
+_LAST_OVERRIDES_MTIME = None
+
+
+def _safe_float(v, fallback):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _safe_int(v, fallback):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _read_overrides_file() -> dict:
+    if not RUNTIME_OVERRIDES_FILE.exists():
+        return {}
+    try:
+        return json.loads(RUNTIME_OVERRIDES_FILE.read_text())
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def _apply_defaults():
+    global MAX_BET_RATIO, MAX_EXPOSURE_RATIO, DAILY_LOSS_RATIO
+    global MIN_ASK_DEPTH, MAX_ASK_PRICE, ORDER_TIMEOUT_SECONDS
+    MAX_BET_RATIO = _BASE_GLOBALS["MAX_BET_RATIO"]
+    MAX_EXPOSURE_RATIO = _BASE_GLOBALS["MAX_EXPOSURE_RATIO"]
+    DAILY_LOSS_RATIO = _BASE_GLOBALS["DAILY_LOSS_RATIO"]
+    MIN_ASK_DEPTH = _BASE_GLOBALS["MIN_ASK_DEPTH"]
+    MAX_ASK_PRICE = _BASE_GLOBALS["MAX_ASK_PRICE"]
+    ORDER_TIMEOUT_SECONDS = _BASE_GLOBALS["ORDER_TIMEOUT_SECONDS"]
+
+    for city_key, base in _BASE_CITY_THRESHOLDS.items():
+        city_cfg = CITIES.get(city_key)
+        if not city_cfg:
+            continue
+        city_cfg["min_models"] = base["min_models"]
+        city_cfg["min_edge"] = base["min_edge"]
+        city_cfg["min_families"] = min(base["min_families"], city_cfg["total_families"])
+
+
+def _apply_overrides(payload: dict):
+    """
+    Apply validated runtime overrides on top of defaults.
+    """
+    global MAX_BET_RATIO, MAX_EXPOSURE_RATIO, DAILY_LOSS_RATIO
+    global MIN_ASK_DEPTH, MAX_ASK_PRICE, ORDER_TIMEOUT_SECONDS
+
+    _apply_defaults()
+
+    if not isinstance(payload, dict):
+        return
+
+    MAX_BET_RATIO = max(0.0, min(1.0, _safe_float(payload.get("max_bet_ratio"), MAX_BET_RATIO)))
+    MAX_EXPOSURE_RATIO = max(0.0, min(1.0, _safe_float(payload.get("max_exposure_ratio"), MAX_EXPOSURE_RATIO)))
+    DAILY_LOSS_RATIO = max(0.0, min(1.0, _safe_float(payload.get("daily_loss_ratio"), DAILY_LOSS_RATIO)))
+    MIN_ASK_DEPTH = max(0, _safe_int(payload.get("min_ask_depth"), MIN_ASK_DEPTH))
+    MAX_ASK_PRICE = max(0.01, min(0.99, _safe_float(payload.get("max_ask_price"), MAX_ASK_PRICE)))
+    ORDER_TIMEOUT_SECONDS = max(30, _safe_int(payload.get("order_timeout_seconds"), ORDER_TIMEOUT_SECONDS))
+
+    city_overrides = payload.get("city_overrides", {})
+    if isinstance(city_overrides, dict):
+        for city_key, ov in city_overrides.items():
+            city_cfg = CITIES.get(city_key)
+            if not city_cfg or not isinstance(ov, dict):
+                continue
+
+            if "min_models" in ov:
+                city_cfg["min_models"] = max(1, _safe_int(ov.get("min_models"), city_cfg["min_models"]))
+            if "min_edge" in ov:
+                city_cfg["min_edge"] = max(0.0, min(0.5, _safe_float(ov.get("min_edge"), city_cfg["min_edge"])))
+            if "min_families" in ov:
+                city_cfg["min_families"] = max(1, _safe_int(ov.get("min_families"), city_cfg["min_families"]))
+
+            city_cfg["min_families"] = min(city_cfg["min_families"], city_cfg["total_families"])
+            city_cfg["min_models"] = min(city_cfg["min_models"], city_cfg["total_models"])
+
+    # Recompute dollar limits from current bankroll after ratio changes.
+    update_bankroll(BANKROLL)
+
+
+def refresh_runtime_overrides(force: bool = False) -> dict:
+    """
+    Reload overrides file when changed. Returns active override payload.
+    """
+    global _LAST_OVERRIDES_MTIME
+    mtime = None
+    if RUNTIME_OVERRIDES_FILE.exists():
+        try:
+            mtime = RUNTIME_OVERRIDES_FILE.stat().st_mtime
+        except OSError:
+            mtime = None
+
+    if not force and mtime == _LAST_OVERRIDES_MTIME:
+        return _read_overrides_file()
+
+    payload = _read_overrides_file()
+    _apply_overrides(payload)
+    _LAST_OVERRIDES_MTIME = mtime
+    return payload
+
+
+def write_runtime_overrides(payload: dict):
+    """
+    Persist overrides and apply immediately.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be a dict")
+    RUNTIME_OVERRIDES_FILE.write_text(json.dumps(payload, indent=2))
+    refresh_runtime_overrides(force=True)
+
+
+def get_runtime_overrides() -> dict:
+    return deepcopy(_read_overrides_file())
+
+
+def get_runtime_effective() -> dict:
+    return {
+        "max_bet_ratio": MAX_BET_RATIO,
+        "max_exposure_ratio": MAX_EXPOSURE_RATIO,
+        "daily_loss_ratio": DAILY_LOSS_RATIO,
+        "min_ask_depth": MIN_ASK_DEPTH,
+        "max_ask_price": MAX_ASK_PRICE,
+        "order_timeout_seconds": ORDER_TIMEOUT_SECONDS,
+        "city_thresholds": {
+            city_key: {
+                "min_models": cfg.get("min_models"),
+                "min_edge": cfg.get("min_edge"),
+                "min_families": cfg.get("min_families"),
+            }
+            for city_key, cfg in CITIES.items()
+        },
+    }
+
+
+# Apply persisted runtime overrides on import.
+refresh_runtime_overrides(force=True)
 
 # ══════════════════════════════════════════════════════
 # API ENDPOINTS

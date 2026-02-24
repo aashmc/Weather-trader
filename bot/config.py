@@ -82,6 +82,8 @@ MATURITY_MIN_LIQUID_BRACKETS = 3  # At least 3 brackets with depth ≥10
 # CONCENTRATION-BASED KELLY SCALING
 # ══════════════════════════════════════════════════════
 CONCENTRATION_MIN = 0.50       # <50% = no trade
+CONCENTRATION_HARD_FLOOR = 0.25  # Extreme uncertainty hard stop
+CONCENTRATION_BELOW_MIN_MULT = 0.25  # Kelly multiplier when below min but above hard floor
 CONCENTRATION_TIERS = [
     (0.70, 0.75),  # ≥70% → 0.75x Kelly
     (0.60, 0.60),  # 60-69% → 0.60x Kelly
@@ -103,6 +105,17 @@ EXECUTION_SPREAD_REF = 0.04         # 4c spread reference for fill/queue penalti
 EXECUTION_QUEUE_PENALTY = 0.50      # Penalize continuation fill when spread is wide
 EXECUTION_MIN_FILL = 0.05           # Floor on expected fill fraction
 EXECUTION_MAX_FILL = 0.98           # Ceiling on expected fill fraction
+
+# Adaptive edge hurdle (money-max mode)
+ADAPTIVE_EDGE_BASE = 0.01               # 1c base edge floor after costs
+ADAPTIVE_SPREAD_EDGE_SLOPE = 0.50       # Every 1c extra spread adds 0.5c required edge
+ADAPTIVE_DEPTH_EDGE_MAX = 0.02          # Up to +2c required edge for thin books
+ADAPTIVE_LATE_EDGE_ADDER = 0.01         # +1c after local cutoff
+ADAPTIVE_NONFAV_LATE_EDGE_ADDER = 0.01  # Additional +1c for non-favorites after cutoff
+
+# Model/family agreement now scales size instead of hard-blocking
+AGREEMENT_SCALE_FLOOR = 0.35            # Weak-but-nonzero agreement keeps 35% size floor
+AGREEMENT_SCALE_MIN = 0.10              # Never size below 10% unless extreme disagreement
 
 # Data freshness gate
 DATA_FRESHNESS_GUARD_ENABLED = True
@@ -132,6 +145,38 @@ QUALITY_WINDOW = 30
 QUALITY_MIN_SAMPLES = 20
 QUALITY_MAX_BRIER = 0.95
 QUALITY_MIN_WINNER_PROB = 0.12
+
+# Live guardrails: auto-tighten if realized trading quality degrades
+LIVE_GUARDRAIL_ENABLED = True
+LIVE_GUARDRAIL_WINDOW_TRADES = 30
+LIVE_GUARDRAIL_MIN_RESOLVED = 8
+LIVE_GUARDRAIL_WARN_ROI = -0.05
+LIVE_GUARDRAIL_SEVERE_ROI = -0.10
+LIVE_GUARDRAIL_WARN_FILL_RATE = 0.45
+LIVE_GUARDRAIL_SEVERE_FILL_RATE = 0.30
+LIVE_GUARDRAIL_WARN_EDGE_CAPTURE = 0.35
+LIVE_GUARDRAIL_SEVERE_EDGE_CAPTURE = 0.15
+LIVE_GUARDRAIL_WARN_EDGE_BUMP = 0.01
+LIVE_GUARDRAIL_SEVERE_EDGE_BUMP = 0.02
+LIVE_GUARDRAIL_WARN_SIZE_MULT = 0.75
+LIVE_GUARDRAIL_SEVERE_SIZE_MULT = 0.50
+LIVE_GUARDRAIL_ALERT_COOLDOWN_SECONDS = 4 * 3600
+
+# Weekly auto-tune from resolved quality metrics
+AUTO_TUNE_ENABLED = True
+AUTO_TUNE_WEEKDAY_UTC = 0       # Monday
+AUTO_TUNE_MIN_SAMPLES = 20
+AUTO_TUNE_WINDOW = 60
+AUTO_TUNE_GOOD_BRIER = 0.80
+AUTO_TUNE_BAD_BRIER = 0.95
+AUTO_TUNE_GOOD_WINPROB = 0.22
+AUTO_TUNE_BAD_WINPROB = 0.14
+AUTO_TUNE_EDGE_STEP = 0.01
+AUTO_TUNE_CONC_STEP = 0.02
+AUTO_TUNE_MIN_EDGE = 0.01
+AUTO_TUNE_MAX_EDGE = 0.12
+AUTO_TUNE_MIN_CONC = 0.35
+AUTO_TUNE_MAX_CONC = 0.65
 
 # ══════════════════════════════════════════════════════
 # LATE-SESSION ENTRY GUARD
@@ -193,7 +238,7 @@ CITIES = {
         "bias_sd": 0.66,
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 3,    # 3/5 models must agree
-        "min_edge": 0.05,   # 5pt minimum edge
+        "min_edge": 0.01,   # Base edge floor now starts at 1c + adaptive adders
         "min_concentration": 0.50,  # top-2 mass must be >= 50%
         # Spread policy: keep strict for London by default.
         "fav_soft_spread": 0.03,
@@ -222,7 +267,7 @@ CITIES = {
         "bias_sd": 0.86,
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 3,    # 3/4 models must agree
-        "min_edge": 0.05,
+        "min_edge": 0.01,
         "min_concentration": 0.50,  # top-2 mass must be >= 50%
         # Seoul: allow favorite entries in moderate spreads if edge/depth are strong.
         "fav_soft_spread": 0.03,
@@ -250,7 +295,7 @@ CITIES = {
         "bias_sd": 2.49,
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 2,    # 2/2 — both must agree
-        "min_edge": 0.08,   # 8pt higher threshold
+        "min_edge": 0.01,   # Adaptive hurdle handles risk now
         "min_concentration": 0.45,  # lower than EU/Seoul: US brackets are often flatter
         "fav_soft_spread": 0.03,
         "fav_relaxed_spread": 0.03,
@@ -278,7 +323,7 @@ CITIES = {
         "bias_sd": 1.93,
         "bias_note": "45-day METAR backtest Jan-Feb 2026",
         "min_models": 2,    # 2/3 models must agree
-        "min_edge": 0.05,
+        "min_edge": 0.01,
         "min_concentration": 0.45,  # lower than EU/Seoul: US brackets are often flatter
         "fav_soft_spread": 0.03,
         "fav_relaxed_spread": 0.03,

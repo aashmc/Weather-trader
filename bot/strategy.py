@@ -4,10 +4,10 @@ Full signal pipeline:
   1. Market maturity check
   2. Identify market favorite
   3. Candidates = favorite ±1
-  4. Per-city filters (models, edge)
-  5. Concentration check (top 2 ≥ 50%)
+  4. Adaptive edge hurdle (1c base + spread/depth/time adders)
+  5. Concentration check + Kelly scaling
   6. Kelly scaling by concentration (capped at 75%)
-  7. Model vs market divergence warning
+  7. Model vs market divergence warning (non-blocking)
 """
 
 import logging
@@ -102,6 +102,64 @@ def _required_ask_depth(city_config: dict, contracts: int) -> float:
     return max(floor, scaled)
 
 
+def _agreement_multiplier(
+    model_votes: int,
+    family_votes: int,
+    min_models: int,
+    min_families: int,
+) -> tuple[float, str | None]:
+    """
+    Scale bet-size by model/family agreement instead of hard blocking.
+    Extreme disagreement (zero support) still blocks.
+    """
+    if model_votes <= 0 or family_votes <= 0:
+        return 0.0, "extreme disagreement"
+
+    model_ratio = model_votes / max(1, min_models)
+    family_ratio = family_votes / max(1, min_families)
+    support = min(model_ratio, family_ratio)
+    floor = _clip(config.AGREEMENT_SCALE_FLOOR, 0.0, 1.0)
+    min_mult = _clip(config.AGREEMENT_SCALE_MIN, 0.0, 1.0)
+    mult = floor + (1.0 - floor) * _clip(support, 0.0, 1.0)
+    return _clip(mult, min_mult, 1.0), None
+
+
+def _adaptive_edge_threshold(
+    city_config: dict,
+    spread: float,
+    ask_depth: float,
+    required_depth: float,
+    late_applies: bool,
+    late_phase: str,
+    is_favorite: bool,
+    guard_edge_bump: float = 0.0,
+) -> float:
+    """
+    Required edge after costs:
+      base 1c floor + spread adder + depth adder + late-session adder + live guardrail bump.
+    """
+    base = float(city_config.get("min_edge", config.ADAPTIVE_EDGE_BASE))
+    soft_spread = float(city_config.get("fav_soft_spread", MATURITY_MAX_FAV_SPREAD))
+    spread_slope = float(city_config.get("adaptive_spread_edge_slope", config.ADAPTIVE_SPREAD_EDGE_SLOPE))
+    depth_edge_max = float(city_config.get("adaptive_depth_edge_max", config.ADAPTIVE_DEPTH_EDGE_MAX))
+
+    spread_excess = max(0.0, spread - soft_spread)
+    spread_adder = max(0.0, spread_excess * spread_slope)
+
+    depth_ratio = 0.0
+    if required_depth > 0:
+        depth_ratio = _clip((required_depth - ask_depth) / required_depth, 0.0, 1.0)
+    depth_adder = depth_ratio * max(0.0, depth_edge_max)
+
+    late_adder = 0.0
+    if late_applies and late_phase in ("after_cutoff", "freeze"):
+        late_adder += max(0.0, config.ADAPTIVE_LATE_EDGE_ADDER)
+        if not is_favorite:
+            late_adder += max(0.0, config.ADAPTIVE_NONFAV_LATE_EDGE_ADDER)
+
+    return _clip(base + spread_adder + depth_adder + late_adder + max(0.0, guard_edge_bump), 0.0, 0.5)
+
+
 # ══════════════════════════════════════════════════════
 # STEP 1: MARKET MATURITY CHECK
 # ══════════════════════════════════════════════════════
@@ -114,16 +172,7 @@ def check_market_maturity(brackets: list[dict], books: dict, city_config: dict |
     if not books:
         return False, "no order books"
 
-    # Check 1: Any bracket with ask ≥ 25¢?
-    max_ask = 0
-    for label, book in books.items():
-        if book and book.get("ba", 0) > max_ask:
-            max_ask = book["ba"]
-
-    if max_ask < MATURITY_MIN_FAV_PRICE:
-        return False, f"no bracket ≥{MATURITY_MIN_FAV_PRICE*100:.0f}¢ (max={max_ask*100:.1f}¢)"
-
-    # Check 2: Favorite bracket hard spread cap (absolute no-trade).
+    # Keep only the strict hard-cap maturity safety gate.
     hard_cap = MATURITY_HARD_MAX_FAV_SPREAD
     if city_config:
         hard_cap = float(city_config.get("maturity_hard_spread", hard_cap))
@@ -131,14 +180,6 @@ def check_market_maturity(brackets: list[dict], books: dict, city_config: dict |
     fav_book = books[fav_label]
     if fav_book and fav_book.get("spread", 1) > hard_cap:
         return False, f"favorite spread {fav_book['spread']*100:.1f}¢ > hard cap {hard_cap*100:.0f}¢"
-
-    # Check 3: At least 3 brackets with ask depth ≥ 10
-    liquid_count = sum(
-        1 for b in books.values()
-        if b and b.get("ask_depth", 0) >= 10
-    )
-    if liquid_count < MATURITY_MIN_LIQUID_BRACKETS:
-        return False, f"only {liquid_count} liquid brackets (need {MATURITY_MIN_LIQUID_BRACKETS})"
 
     return True, "mature"
 
@@ -203,19 +244,18 @@ def compute_concentration(
     sorted_probs = sorted(corrected_probs.values(), reverse=True)
     top2 = sum(sorted_probs[:2]) if len(sorted_probs) >= 2 else sum(sorted_probs)
 
-    if top2 < min_concentration:
+    if top2 < config.CONCENTRATION_HARD_FLOOR:
         return top2, 0.0
-
-    kelly_mult = 0.0
-    for threshold, mult in CONCENTRATION_TIERS:
-        if top2 >= threshold:
-            kelly_mult = mult
-            break
-
-    # If city min concentration is below the lowest global tier (e.g. 45%),
-    # keep a conservative floor Kelly instead of creating a dead-zone.
-    if kelly_mult <= 0 and top2 >= min_concentration:
-        kelly_mult = CONCENTRATION_TIERS[-1][1] if CONCENTRATION_TIERS else 0.5
+    if top2 < min_concentration:
+        kelly_mult = config.CONCENTRATION_BELOW_MIN_MULT
+    else:
+        kelly_mult = 0.0
+        for threshold, mult in CONCENTRATION_TIERS:
+            if top2 >= threshold:
+                kelly_mult = mult
+                break
+        if kelly_mult <= 0:
+            kelly_mult = CONCENTRATION_TIERS[-1][1] if CONCENTRATION_TIERS else 0.5
 
     # Cap at KELLY_CAP
     kelly_mult = min(kelly_mult, KELLY_CAP)
@@ -370,6 +410,7 @@ def analyze_brackets(
     current_exposure: float,
     city_config: dict,
     late_context: dict | None = None,
+    live_guard: dict | None = None,
 ) -> dict:
     """
     Full v5 signal pipeline. Returns a dict with:
@@ -412,6 +453,10 @@ def analyze_brackets(
 
     log.info(f"  Market favorite: {fav_label} (idx {fav_idx})")
 
+    guard = live_guard or {}
+    guard_size_mult = _clip(float(guard.get("size_mult", 1.0) or 1.0), 0.0, 1.0)
+    guard_edge_bump = max(0.0, float(guard.get("edge_bump", 0.0) or 0.0))
+
     # ── Step 5: Concentration check ──
     min_concentration = float(city_config.get("min_concentration", CONCENTRATION_MIN))
     concentration, kelly_mult = compute_concentration(
@@ -424,13 +469,21 @@ def analyze_brackets(
 
     if kelly_mult <= 0:
         log.info(
-            "  Concentration too low: %.1f%% (need ≥%.0f%%)",
+            "  Concentration too low: %.1f%% (hard floor %.0f%%)",
             concentration * 100,
-            min_concentration * 100,
+            config.CONCENTRATION_HARD_FLOOR * 100,
         )
         return result
 
-    log.info(f"  Concentration: {concentration*100:.1f}% → Kelly mult {kelly_mult:.2f}x")
+    if concentration < min_concentration:
+        log.info(
+            "  Concentration below min: %.1f%% < %.0f%% (soft Kelly %.2fx)",
+            concentration * 100,
+            min_concentration * 100,
+            kelly_mult,
+        )
+    else:
+        log.info(f"  Concentration: {concentration*100:.1f}% → Kelly mult {kelly_mult:.2f}x")
 
     # ── Step 7: Divergence check ──
     diverged, div_dist, model_top, market_fav = check_divergence(
@@ -441,13 +494,11 @@ def analyze_brackets(
     if diverged:
         log.warning(
             f"  ⚠️ DIVERGENCE: model top={model_top} vs market fav={market_fav} "
-            f"({div_dist} brackets apart) → skipping"
+            f"({div_dist} brackets apart) → size/edge penalties only"
         )
-        return result
 
     # ── Step 3: Get candidate brackets (favorite ±1) ──
     candidates = get_candidate_brackets(brackets, fav_idx)
-    candidate_labels = {c["label"] for c in candidates}
     result["candidates"] = candidates
     log.info(f"  Candidates: {[c['label'] for c in candidates]}")
 
@@ -475,11 +526,6 @@ def analyze_brackets(
     # ── Step 4 + 6: Analyze each candidate ──
     min_models = city_config.get("min_models", 2)
     min_families = city_config.get("min_families", min_models)
-    min_edge = city_config.get("min_edge", 0.05)
-    fav_soft_spread = float(city_config.get("fav_soft_spread", MATURITY_MAX_FAV_SPREAD))
-    fav_relaxed_spread = float(city_config.get("fav_relaxed_spread", fav_soft_spread))
-    fav_relaxed_min_edge = float(city_config.get("fav_relaxed_min_edge", min_edge))
-    fav_relaxed_min_depth = float(city_config.get("fav_relaxed_min_depth", MIN_ASK_DEPTH))
     remaining_budget = config.MAX_TOTAL_EXPOSURE - current_exposure
     total_families = max(1, total_families)
 
@@ -509,7 +555,25 @@ def analyze_brackets(
                 mv = max(mv, model_votes.get(d, 0))
                 fv = max(fv, family_votes.get(d, 0))
 
-        # Kelly with concentration scaling
+        # Base thresholds used by agreement sizing and adaptive edge
+        edge_threshold = float(city_config.get("min_edge", config.ADAPTIVE_EDGE_BASE))
+        family_threshold = min_families
+        if late_applies and late_phase in ("after_cutoff", "freeze"):
+            family_threshold = min(
+                total_families,
+                family_threshold + max(0, config.LATE_GUARD_AFTER_CUTOFF_FAMILY_BUMP),
+            )
+
+        agreement_mult, agreement_block_reason = _agreement_multiplier(
+            model_votes=mv,
+            family_votes=fv,
+            min_models=min_models,
+            min_families=family_threshold,
+        )
+        if diverged:
+            agreement_mult *= 0.75
+
+        # Kelly with concentration scaling + agreement scaling + live guardrail scaling
         kelly_full = 0.0
         kelly_bet = 0.0
         expected_profit = 0.0
@@ -529,11 +593,26 @@ def analyze_brackets(
             b_odds = (1 - ask) / ask
             q = 1 - cor_p
             base_kelly = (b_odds * cor_p - q) / b_odds
-            base_kelly_frac = max(0, base_kelly * KELLY_FRACTION * kelly_mult)
+            base_kelly_frac = max(
+                0,
+                base_kelly * KELLY_FRACTION * kelly_mult * agreement_mult * guard_size_mult,
+            )
             base_bet = round(base_kelly_frac * config.BANKROLL, 2)
             base_bet = min(base_bet, config.MAX_BET_PER_BRACKET)
             base_bet = min(base_bet, max(0, remaining_budget))
             contracts_hint = max(1, int(base_bet / ask)) if base_bet > 0 else 1
+            required_depth = _required_ask_depth(city_config, contracts_hint)
+
+            edge_threshold = _adaptive_edge_threshold(
+                city_config=city_config,
+                spread=spread,
+                ask_depth=ask_depth,
+                required_depth=required_depth,
+                late_applies=late_applies,
+                late_phase=late_phase,
+                is_favorite=(label == fav_label),
+                guard_edge_bump=guard_edge_bump,
+            )
 
             est = _estimate_execution(book, ask, contracts_hint)
             fill_fraction = est["fill_fraction"]
@@ -553,7 +632,10 @@ def analyze_brackets(
                 eff_b = (1 - kelly_price) / kelly_price
                 kelly_full = (eff_b * cor_p - (1 - cor_p)) / eff_b
                 fill_mult = fill_fraction if config.EXECUTION_ADJUSTED_EDGE_ENABLED else 1.0
-                kelly_frac = max(0, kelly_full * KELLY_FRACTION * kelly_mult * fill_mult)
+                kelly_frac = max(
+                    0,
+                    kelly_full * KELLY_FRACTION * kelly_mult * fill_mult * agreement_mult * guard_size_mult,
+                )
                 kelly_bet = round(kelly_frac * config.BANKROLL, 2)
 
                 # Apply caps
@@ -581,55 +663,29 @@ def analyze_brackets(
             true_edge = edge_after_costs * fill_fraction if config.EXECUTION_ADJUSTED_EDGE_ENABLED else edge_after_costs
             expected_profit = round(contracts * fill_fraction * edge_after_costs, 2) if contracts > 0 else 0.0
 
-        # Filter checks
-        edge_threshold = min_edge
-        family_threshold = min_families
-        if late_applies and late_phase in ("after_cutoff", "freeze"):
-            edge_threshold = max(edge_threshold, config.LATE_GUARD_AFTER_CUTOFF_MIN_EDGE)
-            family_threshold = min(
-                total_families,
-                family_threshold + max(0, config.LATE_GUARD_AFTER_CUTOFF_FAMILY_BUMP),
-            )
-
-        required_depth = _required_ask_depth(city_config, contracts)
+        # Final adaptive edge threshold uses final contract/depth estimate when available.
+        required_depth = _required_ask_depth(city_config, contracts if contracts > 0 else 1)
+        edge_threshold = _adaptive_edge_threshold(
+            city_config=city_config,
+            spread=spread,
+            ask_depth=ask_depth,
+            required_depth=required_depth,
+            late_applies=late_applies,
+            late_phase=late_phase,
+            is_favorite=(label == fav_label),
+            guard_edge_bump=guard_edge_bump,
+        )
         filter_reasons = []
         if true_edge < edge_threshold:
             filter_reasons.append(
                 f"edge {true_edge*100:.1f}pt < {edge_threshold*100:.0f}pt"
             )
-        if mv < min_models:
-            filter_reasons.append(
-                f"models {mv}/{total_models} < {min_models}"
-            )
-        if fv < family_threshold:
-            filter_reasons.append(
-                f"families {fv}/{total_families} < {family_threshold}"
-            )
-        if ask_depth < required_depth:
-            filter_reasons.append(
-                f"depth {ask_depth:.0f} < {required_depth:.0f}"
-            )
+        if agreement_block_reason:
+            filter_reasons.append(agreement_block_reason)
         if ask > MAX_ASK_PRICE:
             filter_reasons.append(
                 f"ask {ask*100:.0f}¢ > {MAX_ASK_PRICE*100:.0f}¢"
             )
-        if label == fav_label:
-            if spread > fav_relaxed_spread:
-                filter_reasons.append(
-                    f"favorite spread {spread*100:.1f}¢ > {fav_relaxed_spread*100:.0f}¢"
-                )
-            elif spread > fav_soft_spread:
-                required_relaxed_depth = max(fav_relaxed_min_depth, required_depth)
-                if true_edge < fav_relaxed_min_edge or ask_depth < required_relaxed_depth:
-                    filter_reasons.append(
-                        "favorite wide spread requires "
-                        f"edge≥{fav_relaxed_min_edge*100:.0f}pt and depth≥{required_relaxed_depth:.0f}"
-                    )
-        else:
-            if spread > fav_soft_spread:
-                filter_reasons.append(
-                    f"spread {spread*100:.1f}¢ > {fav_soft_spread*100:.0f}¢ (non-favorite)"
-                )
         if label in existing_positions:
             filter_reasons.append("already holding")
         if kelly_bet <= 0:
@@ -641,19 +697,6 @@ def analyze_brackets(
             filter_reasons.append(
                 f"observed high {observed_day_high_market} already above bracket"
             )
-
-        if late_applies:
-            if (
-                late_phase == "freeze"
-                and config.LATE_GUARD_FREEZE_ALL_NEW_ENTRIES
-            ):
-                filter_reasons.append("late freeze window")
-            elif (
-                late_phase in ("after_cutoff", "freeze")
-                and config.LATE_GUARD_AFTER_CUTOFF_FAVORITE_ONLY
-                and label != fav_label
-            ):
-                filter_reasons.append("late cutoff: non-favorite blocked")
 
         passed = len(filter_reasons) == 0 and true_edge > 0
         signal = "BUY" if passed else ("FILTERED" if true_edge > 0 else "PASS")
@@ -684,11 +727,13 @@ def analyze_brackets(
             "execution_adjusted": config.EXECUTION_ADJUSTED_EDGE_ENABLED,
             "model_votes": mv,
             "family_votes": fv,
+            "agreement_multiplier": agreement_mult,
             "total_models": total_models,
             "total_families": total_families,
             "kelly_full": kelly_full,
             "kelly_bet": kelly_bet,
             "kelly_multiplier": kelly_mult,
+            "guardrail_multiplier": guard_size_mult,
             "concentration": concentration,
             "expected_profit": expected_profit,
             "contracts": contracts,

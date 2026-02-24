@@ -35,6 +35,12 @@ from strategy import (
     compute_totals,
     condition_probs_on_observed_high,
 )
+from auto_tune import run_weekly_parameter_tune
+from performance_guard import (
+    evaluate_live_guardrails,
+    should_alert_guardrails,
+    format_guardrail_alert,
+)
 from risk import (
     can_trade, record_trade, update_fill_status, get_existing_positions,
     get_daily_exposure, get_daily_pnl, is_kill_switch_active,
@@ -502,7 +508,7 @@ def get_market_dates() -> list[str]:
     return dates
 
 
-async def process_city(city_key: str, city: dict, date_str: str) -> dict:
+async def process_city(city_key: str, city: dict, date_str: str, live_guard: dict | None = None) -> dict:
     """
     Run full analysis + trading cycle for one city on one date.
     Returns summary dict.
@@ -627,6 +633,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
             current_exposure=exposure,
             city_config=city,
             late_context=late_context,
+            live_guard=live_guard,
         )
 
         # Handle maturity failure
@@ -652,38 +659,6 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                 v5_late_guard=analysis.get("late_guard", late_context),
             )
             result["status"] = f"immature:{maturity_reason}"
-            return result
-
-        # Handle divergence warning
-        diverged, div_dist, model_top, market_fav = analysis["divergence"]
-        if diverged:
-            await send_telegram(
-                f"⚠️ <b>DIVERGENCE: {city_name} {date_str}</b>\n"
-                f"  Model top: {model_top}\n"
-                f"  Market fav: {market_fav}\n"
-                f"  Distance: {div_dist} brackets\n"
-                f"  → Skipping (model & market disagree)"
-            )
-            # Still log for recalibration
-            await log_cycle(
-                city=city_name, date_str=date_str,
-                ensemble_mean=ensemble["mean"], ensemble_count=ensemble["count"],
-                metar_high=metar["day_high_market"], metar_current=metar["current_temp_c"],
-                metar_obs_count=metar["observation_count"],
-                brackets_data=analysis.get("signals", []), signals=[], trades_placed=[],
-                raw_dist=ensemble["raw_dist"], corrected_dist=corrected_dist,
-                model_votes=ensemble["model_votes"], market_prices=prices,
-                books_snapshot=books, max_temps=ensemble["max_temps"],
-                bias_mean=bias_mean_used, bias_sd=bias_sd_used,
-                current_exposure=exposure, daily_pnl=get_daily_pnl(),
-                v5_favorite=analysis.get("favorite"), v5_concentration=analysis.get("concentration", 0),
-                v5_kelly_multiplier=analysis.get("kelly_multiplier", 0),
-                v5_maturity={"mature": True, "reason": ""},
-                v5_divergence={"diverged": True, "distance": div_dist, "model_top": model_top, "market_fav": market_fav},
-                v5_candidates=[c["label"] for c in analysis.get("candidates", [])],
-                v5_late_guard=analysis.get("late_guard", late_context),
-            )
-            result["status"] = f"divergence:{div_dist}"
             return result
 
         signals = get_actionable_signals(analysis)
@@ -1038,6 +1013,35 @@ async def run_cycle():
     await poll_telegram_commands()
     config.refresh_runtime_overrides()
 
+    tune_meta = run_weekly_parameter_tune()
+    if tune_meta.get("applied"):
+        # Ensure any override writes are loaded into runtime thresholds.
+        config.refresh_runtime_overrides(force=True)
+        changes = tune_meta.get("changes", {})
+        if changes:
+            parts = []
+            for city_key, item in changes.items():
+                parts.append(
+                    f"{city_key}: edge {item['old_edge']*100:.1f}->{item['new_edge']*100:.1f}pt, "
+                    f"conc {item['old_concentration']*100:.0f}->{item['new_concentration']*100:.0f}%"
+                )
+            log.info(f"Weekly auto-tune applied ({tune_meta.get('week')}): {' | '.join(parts)}")
+            await send_telegram(
+                f"🧠 <b>WEEKLY AUTO-TUNE APPLIED ({tune_meta.get('week')})</b>\n"
+                + "\n".join(f"  • {p}" for p in parts)
+            )
+
+    live_guard = evaluate_live_guardrails()
+    if should_alert_guardrails(live_guard):
+        await send_telegram(format_guardrail_alert(live_guard))
+    if live_guard.get("level", 0) > 0:
+        log.warning(
+            "Live guardrail active: level=%s edge_bump=%.1fpt size_mult=%.2fx",
+            live_guard.get("level"),
+            live_guard.get("edge_bump", 0.0) * 100,
+            live_guard.get("size_mult", 1.0),
+        )
+
     dry_run = is_dry_run()
     paused = is_paused()
     mode = get_mode()
@@ -1096,7 +1100,7 @@ async def run_cycle():
                 )
                 continue
             try:
-                result = await process_city(city_key, city, date_str)
+                result = await process_city(city_key, city, date_str, live_guard=live_guard)
                 if result.get("status") == "market_unavailable":
                     if _is_future_market(city, date_str):
                         _record_market_availability(city_key, date_str, exists=False)

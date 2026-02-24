@@ -25,8 +25,9 @@ from model_quality import (
 )
 from market import (
     fetch_market, fetch_all_books, place_limit_order,
-    cancel_order, check_order_status, bracket_degree,
+    cancel_order, check_order_status,
     fetch_wallet_balance,
+    MarketUnavailableError,
 )
 from strategy import (
     analyze_brackets,
@@ -406,6 +407,85 @@ logging.basicConfig(
 log = logging.getLogger("bot")
 
 cycle_count = 0
+_MARKET_AVAILABILITY_CACHE: dict[tuple[str, str], dict] = {}
+_FRESHNESS_ALERT_CACHE: dict[tuple[str, str], datetime] = {}
+
+
+def _is_market_probe_skipped(city_key: str, date_str: str) -> bool:
+    entry = _MARKET_AVAILABILITY_CACHE.get((city_key, date_str))
+    if not entry:
+        return False
+    if entry.get("exists", True):
+        return False
+    return datetime.now(timezone.utc) < entry.get("next_probe_at", datetime.min.replace(tzinfo=timezone.utc))
+
+
+def _record_market_availability(city_key: str, date_str: str, exists: bool):
+    now = datetime.now(timezone.utc)
+    ttl = timedelta(seconds=max(60, int(config.NONEXISTENT_MARKET_RECHECK_SECONDS)))
+    _MARKET_AVAILABILITY_CACHE[(city_key, date_str)] = {
+        "exists": bool(exists),
+        "checked_at": now,
+        "next_probe_at": now + (timedelta(0) if exists else ttl),
+    }
+
+
+def _is_future_market(city: dict, date_str: str) -> bool:
+    market_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    local_today = datetime.now(timezone.utc).astimezone(ZoneInfo(city["tz"])).date()
+    return market_date > local_today
+
+
+def _get_freshness_reasons(city: dict, date_str: str, ensemble: dict, metar: dict) -> list[str]:
+    if not config.DATA_FRESHNESS_GUARD_ENABLED:
+        return []
+
+    reasons = []
+    if not bool(ensemble.get("freshness_ok", True)):
+        src = ensemble.get("source", "unknown")
+        age = ensemble.get("cache_age_minutes")
+        if age is not None:
+            reasons.append(f"forecast stale ({src}, {age:.0f}m old)")
+        else:
+            reasons.append(f"forecast stale ({src})")
+
+    if not _is_future_market(city, date_str):
+        if not bool(metar.get("freshness_ok", False)):
+            src = metar.get("source", "unknown")
+            age = metar.get("age_minutes")
+            if age is not None:
+                reasons.append(f"METAR stale ({age:.0f}m old, {src})")
+            else:
+                reasons.append(f"METAR unavailable ({src})")
+    return reasons
+
+
+def _apply_global_block_reason(analysis: dict, reason: str):
+    for row in analysis.get("signals", []):
+        reasons = row.setdefault("filter_reasons", [])
+        if reason not in reasons:
+            reasons.append(reason)
+        if row.get("signal") == "BUY":
+            row["signal"] = "FILTERED"
+            row["kelly_bet"] = 0.0
+            row["contracts"] = 0
+            row["expected_profit"] = 0.0
+    analysis["actionable"] = []
+
+
+async def _maybe_alert_freshness_block(city_name: str, date_str: str, reason: str):
+    key = (city_name, date_str)
+    now = datetime.now(timezone.utc)
+    cooldown = timedelta(seconds=max(60, int(config.FRESHNESS_ALERT_COOLDOWN_SECONDS)))
+    last = _FRESHNESS_ALERT_CACHE.get(key)
+    if last and now - last < cooldown:
+        return
+    _FRESHNESS_ALERT_CACHE[key] = now
+    await send_telegram(
+        f"⚠️ <b>DATA FRESHNESS BLOCK: {city_name} {date_str}</b>\n"
+        f"  {reason}\n"
+        f"  Trading skipped until fresh data is available."
+    )
 
 
 def get_market_dates() -> list[str]:
@@ -440,7 +520,12 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
 
     try:
         # 1. Fetch market data (brackets + prices)
-        market = await fetch_market(city, date_str)
+        try:
+            market = await fetch_market(city, date_str)
+        except MarketUnavailableError as me:
+            log.info(f"{city_name} {date_str}: Market not open yet ({me})")
+            result["status"] = "market_unavailable"
+            return result
 
         if market["resolved"]:
             log.info(f"{city_name} {date_str}: Already resolved → {market['winner']}")
@@ -603,7 +688,6 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
 
         signals = get_actionable_signals(analysis)
         totals = compute_totals(analysis)
-        result["signals"] = totals["buy_count"]
 
         # Log favorite and concentration
         fav = analysis.get("favorite", "?")
@@ -618,6 +702,19 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
             tradeable = False
             reason = f"quality gate: {quality_reason}"
             log.warning(f"{city_name}: Trading blocked — quality gate ({quality_reason})")
+
+        freshness_reasons = _get_freshness_reasons(city, date_str, ensemble, metar)
+        if tradeable and freshness_reasons:
+            freshness_reason = "data freshness: " + "; ".join(freshness_reasons)
+            _apply_global_block_reason(analysis, freshness_reason)
+            signals = get_actionable_signals(analysis)
+            totals = compute_totals(analysis)
+            tradeable = False
+            reason = freshness_reason
+            log.warning(f"{city_name}: Trading blocked — {freshness_reason}")
+            await _maybe_alert_freshness_block(city_name, date_str, freshness_reason)
+
+        result["signals"] = totals["buy_count"]
         mode = get_mode()
 
         # 7. Handle signals based on mode
@@ -986,8 +1083,27 @@ async def run_cycle():
 
     for city_key, city in CITIES.items():
         for date_str in dates:
+            if _is_market_probe_skipped(city_key, date_str):
+                city_summaries.append(
+                    {
+                        "city": city["name"],
+                        "date": date_str,
+                        "signals": 0,
+                        "trades": 0,
+                        "status": "market_unavailable_cached",
+                        "error": None,
+                    }
+                )
+                continue
             try:
                 result = await process_city(city_key, city, date_str)
+                if result.get("status") == "market_unavailable":
+                    if _is_future_market(city, date_str):
+                        _record_market_availability(city_key, date_str, exists=False)
+                    else:
+                        _MARKET_AVAILABILITY_CACHE.pop((city_key, date_str), None)
+                else:
+                    _record_market_availability(city_key, date_str, exists=True)
                 city_summaries.append(result)
             except Exception as e:
                 log.error(f"Unhandled error in {city['name']} {date_str}: {e}")

@@ -87,6 +87,21 @@ def _estimate_execution(book: dict | None, ask: float, contracts: int) -> dict:
     }
 
 
+def _required_ask_depth(city_config: dict, contracts: int) -> float:
+    """
+    Dynamic depth requirement:
+    - floor by city
+    - scale with expected contracts (capped) for thin books
+    """
+    floor = float(city_config.get("min_ask_depth", MIN_ASK_DEPTH))
+    ratio = float(city_config.get("min_depth_contract_ratio", 0.0))
+    cap = float(city_config.get("min_depth_cap", floor))
+    if contracts <= 0 or ratio <= 0:
+        return floor
+    scaled = min(cap, contracts * ratio)
+    return max(floor, scaled)
+
+
 # ══════════════════════════════════════════════════════
 # STEP 1: MARKET MATURITY CHECK
 # ══════════════════════════════════════════════════════
@@ -576,6 +591,7 @@ def analyze_brackets(
                 family_threshold + max(0, config.LATE_GUARD_AFTER_CUTOFF_FAMILY_BUMP),
             )
 
+        required_depth = _required_ask_depth(city_config, contracts)
         filter_reasons = []
         if true_edge < edge_threshold:
             filter_reasons.append(
@@ -589,9 +605,9 @@ def analyze_brackets(
             filter_reasons.append(
                 f"families {fv}/{total_families} < {family_threshold}"
             )
-        if ask_depth < MIN_ASK_DEPTH:
+        if ask_depth < required_depth:
             filter_reasons.append(
-                f"depth {ask_depth:.0f} < {MIN_ASK_DEPTH}"
+                f"depth {ask_depth:.0f} < {required_depth:.0f}"
             )
         if ask > MAX_ASK_PRICE:
             filter_reasons.append(
@@ -603,10 +619,11 @@ def analyze_brackets(
                     f"favorite spread {spread*100:.1f}¢ > {fav_relaxed_spread*100:.0f}¢"
                 )
             elif spread > fav_soft_spread:
-                if true_edge < fav_relaxed_min_edge or ask_depth < fav_relaxed_min_depth:
+                required_relaxed_depth = max(fav_relaxed_min_depth, required_depth)
+                if true_edge < fav_relaxed_min_edge or ask_depth < required_relaxed_depth:
                     filter_reasons.append(
                         "favorite wide spread requires "
-                        f"edge≥{fav_relaxed_min_edge*100:.0f}pt and depth≥{fav_relaxed_min_depth:.0f}"
+                        f"edge≥{fav_relaxed_min_edge*100:.0f}pt and depth≥{required_relaxed_depth:.0f}"
                     )
         else:
             if spread > fav_soft_spread:
@@ -652,6 +669,7 @@ def analyze_brackets(
             "spread": spread,
             "bid_depth": bid_depth,
             "ask_depth": ask_depth,
+            "required_ask_depth": required_depth,
             "raw_edge": raw_edge,
             "base_true_edge": base_true_edge,
             "true_edge": true_edge,

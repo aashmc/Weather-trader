@@ -6,10 +6,15 @@ applies Monte Carlo bias correction using METAR-calibrated parameters.
 
 import math
 import logging
-import httpx
+from datetime import datetime, timezone
+from copy import deepcopy
+import config
 from config import ENSEMBLE_API, FORECAST_API, MC_SAMPLES, MC_SEED
+from http_retry import get_json
 
 log = logging.getLogger("ensemble")
+
+_ENSEMBLE_CACHE: dict[str, dict] = {}
 
 
 def c_to_f(c: float) -> float:
@@ -80,6 +85,8 @@ async def fetch_ensemble(city: dict, date_str: str) -> dict:
             "raw_dist": {int_deg: float},   # raw probability distribution by degree
         }
     """
+    cache_key = f"{city['name']}:{date_str}"
+    now = datetime.now(timezone.utc)
     models_str = ",".join(city["ensemble_models"])
     url = (
         f"{ENSEMBLE_API}?latitude={city['lat']}&longitude={city['lon']}"
@@ -87,10 +94,29 @@ async def fetch_ensemble(city: dict, date_str: str) -> dict:
         f"&forecast_days=7&timezone={city['tz']}"
     )
 
-    async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        data = r.json()
+    try:
+        data = await get_json(
+            url,
+            timeout=20,
+            attempts=config.API_RETRY_ATTEMPTS,
+            base_backoff_seconds=config.API_RETRY_BACKOFF_SECONDS,
+        )
+    except Exception as exc:
+        cached = _ENSEMBLE_CACHE.get(cache_key)
+        if not cached:
+            raise
+        age_minutes = (now - cached["fetched_at"]).total_seconds() / 60.0
+        payload = deepcopy(cached["payload"])
+        payload["source"] = "cache"
+        payload["cache_age_minutes"] = age_minutes
+        payload["freshness_ok"] = age_minutes <= float(config.FRESHNESS_MAX_FORECAST_AGE_MINUTES)
+        log.warning(
+            "%s: Ensemble live fetch failed (%s). Using cache %.1f min old",
+            city["name"],
+            exc,
+            age_minutes,
+        )
+        return payload
 
     hourly = data.get("hourly", {})
     times = hourly.get("time", [])
@@ -165,14 +191,20 @@ async def fetch_ensemble(city: dict, date_str: str) -> dict:
         f"mean {mean_temp:.1f}{'°F' if city['unit'] == 'F' else '°C'}"
     )
 
-    return {
+    payload = {
         "max_temps": max_temps,
         "mean": mean_temp,
         "count": len(max_temps),
         "model_votes": model_votes,
         "family_votes": family_votes,
         "raw_dist": raw_dist,
+        "source": "live",
+        "fetched_at_utc": now.isoformat(),
+        "cache_age_minutes": 0.0,
+        "freshness_ok": True,
     }
+    _ENSEMBLE_CACHE[cache_key] = {"fetched_at": now, "payload": deepcopy(payload)}
+    return payload
 
 
 async def _fetch_synthetic(city: dict, date_str: str) -> float | None:
@@ -182,10 +214,12 @@ async def _fetch_synthetic(city: dict, date_str: str) -> float | None:
         f"&daily=temperature_2m_max&models={city['synthetic_model']}"
         f"&forecast_days=7&timezone={city['tz']}"
     )
-    async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        data = r.json()
+    data = await get_json(
+        url,
+        timeout=15,
+        attempts=config.API_RETRY_ATTEMPTS,
+        base_backoff_seconds=config.API_RETRY_BACKOFF_SECONDS,
+    )
 
     dates = data.get("daily", {}).get("time", [])
     maxes = data.get("daily", {}).get("temperature_2m_max", [])

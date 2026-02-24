@@ -58,6 +58,14 @@ def update_bankroll(balance: float):
 MIN_ASK_DEPTH = 20             # 20 contracts minimum on ask side
 MAX_ASK_PRICE = 0.50           # Don't buy >50¢
 ORDER_TIMEOUT_SECONDS = 300    # Cancel unfilled limit orders after 5 min
+BOOK_FETCH_CONCURRENCY = 8     # Parallel order-book fetches
+
+# External API retry policy
+API_RETRY_ATTEMPTS = 3
+API_RETRY_BACKOFF_SECONDS = 0.6
+
+# Market availability probing
+NONEXISTENT_MARKET_RECHECK_SECONDS = 7200  # Recheck unopened dates every 2h
 
 CYCLE_INTERVAL_SECONDS = 1800  # 30 minutes between main cycles
 TELEGRAM_POLL_SECONDS = 60     # Fast polling for button presses
@@ -95,6 +103,12 @@ EXECUTION_SPREAD_REF = 0.04         # 4c spread reference for fill/queue penalti
 EXECUTION_QUEUE_PENALTY = 0.50      # Penalize continuation fill when spread is wide
 EXECUTION_MIN_FILL = 0.05           # Floor on expected fill fraction
 EXECUTION_MAX_FILL = 0.98           # Ceiling on expected fill fraction
+
+# Data freshness gate
+DATA_FRESHNESS_GUARD_ENABLED = True
+FRESHNESS_MAX_METAR_AGE_MINUTES = 120
+FRESHNESS_MAX_FORECAST_AGE_MINUTES = 180
+FRESHNESS_ALERT_COOLDOWN_SECONDS = 7200
 
 # ══════════════════════════════════════════════════════
 # ROLLING CALIBRATION (ITEM #3)
@@ -186,6 +200,9 @@ CITIES = {
         "fav_relaxed_spread": 0.03,
         "fav_relaxed_min_edge": 0.05,
         "fav_relaxed_min_depth": 20,
+        "min_ask_depth": 20,
+        "min_depth_contract_ratio": 0.50,
+        "min_depth_cap": 20,
     },
     "seoul": {
         "name": "Seoul",
@@ -212,6 +229,9 @@ CITIES = {
         "fav_relaxed_spread": 0.08,
         "fav_relaxed_min_edge": 0.08,
         "fav_relaxed_min_depth": 30,
+        "min_ask_depth": 20,
+        "min_depth_contract_ratio": 0.50,
+        "min_depth_cap": 30,
     },
     "nyc": {
         "name": "NYC",
@@ -235,7 +255,10 @@ CITIES = {
         "fav_soft_spread": 0.03,
         "fav_relaxed_spread": 0.03,
         "fav_relaxed_min_edge": 0.08,
-        "fav_relaxed_min_depth": 20,
+        "fav_relaxed_min_depth": 12,
+        "min_ask_depth": 8,
+        "min_depth_contract_ratio": 0.35,
+        "min_depth_cap": 16,
     },
     "seattle": {
         "name": "Seattle",
@@ -260,7 +283,10 @@ CITIES = {
         "fav_soft_spread": 0.03,
         "fav_relaxed_spread": 0.03,
         "fav_relaxed_min_edge": 0.05,
-        "fav_relaxed_min_depth": 20,
+        "fav_relaxed_min_depth": 12,
+        "min_ask_depth": 8,
+        "min_depth_contract_ratio": 0.35,
+        "min_depth_cap": 16,
     },
 }
 

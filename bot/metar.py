@@ -5,14 +5,17 @@ Midnight exclusion matches Wunderground resolution convention.
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-import httpx
+from copy import deepcopy
+import config
 from ensemble import c_to_f
+from http_retry import get_json
 
 log = logging.getLogger("metar")
 
 METAR_API = "https://aviationweather.gov/api/data/metar"
+_METAR_CACHE: dict[str, dict] = {}
 
 
 async def fetch_metar(city: dict, date_str: str) -> dict:
@@ -29,12 +32,16 @@ async def fetch_metar(city: dict, date_str: str) -> dict:
         }
     """
     url = f"{METAR_API}?ids={city['icao']}&format=json&hours=72"
+    cache_key = f"{city['name']}:{date_str}"
+    now = datetime.now(timezone.utc)
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            data = r.json()
+        data = await get_json(
+            url,
+            timeout=15,
+            attempts=config.API_RETRY_ATTEMPTS,
+            base_backoff_seconds=config.API_RETRY_BACKOFF_SECONDS,
+        )
 
         if not data:
             log.warning(f"{city['name']}: No METAR data returned")
@@ -43,6 +50,17 @@ async def fetch_metar(city: dict, date_str: str) -> dict:
         tz = ZoneInfo(city["tz"])
         current_temp_c = data[0].get("temp")
         latest_raw = data[0].get("rawOb", "")[:50]
+        latest_obs_time = next((obs.get("obsTime") for obs in data if obs.get("obsTime")), None)
+        latest_obs_dt = (
+            datetime.fromtimestamp(latest_obs_time, tz=timezone.utc)
+            if latest_obs_time is not None
+            else None
+        )
+        age_minutes = (
+            (now - latest_obs_dt).total_seconds() / 60.0
+            if latest_obs_dt is not None
+            else None
+        )
 
         # Filter to local date, excluding midnight (Wunderground convention)
         day_obs = []
@@ -71,28 +89,58 @@ async def fetch_metar(city: dict, date_str: str) -> dict:
                 round(c_to_f(day_high_c)) if city["unit"] == "F" else day_high_c
             )
 
-        log.info(
-            f"{city['name']}: METAR current={current_temp_c}°C, "
-            f"day_high={day_high_market}{'°F' if city['unit'] == 'F' else '°C'} "
-            f"({len(day_obs)} obs)"
+        freshness_ok = bool(
+            age_minutes is not None
+            and age_minutes <= float(config.FRESHNESS_MAX_METAR_AGE_MINUTES)
         )
 
-        return {
+        payload = {
             "current_temp_c": current_temp_c,
             "day_high_c": day_high_c,
             "day_high_market": day_high_market,
             "observation_count": len(day_obs),
             "latest_raw": latest_raw,
+            "source": "metar_live",
+            "latest_obs_time_utc": latest_obs_dt.isoformat() if latest_obs_dt else None,
+            "age_minutes": age_minutes,
+            "cache_age_minutes": 0.0,
+            "freshness_ok": freshness_ok,
+            "fetched_at_utc": now.isoformat(),
         }
+        _METAR_CACHE[cache_key] = {"fetched_at": now, "payload": deepcopy(payload)}
+
+        log.info(
+            f"{city['name']}: METAR current={current_temp_c}°C, "
+            f"day_high={day_high_market}{'°F' if city['unit'] == 'F' else '°C'} "
+            f"({len(day_obs)} obs)"
+        )
+        return payload
 
     except Exception as e:
         log.error(f"{city['name']}: METAR fetch failed: {e}")
-        # Fallback to Open-Meteo current temp
-        try:
-            return await _fallback_current_temp(city)
-        except Exception as e2:
-            log.error(f"{city['name']}: Fallback weather also failed: {e2}")
-            return _empty_result()
+
+    # Cache fallback
+    cached = _METAR_CACHE.get(cache_key)
+    if cached:
+        cache_age_minutes = (now - cached["fetched_at"]).total_seconds() / 60.0
+        payload = deepcopy(cached["payload"])
+        payload["source"] = "metar_cache"
+        payload["cache_age_minutes"] = cache_age_minutes
+        payload["freshness_ok"] = bool(
+            payload.get("age_minutes") is not None
+            and float(payload.get("age_minutes")) <= float(config.FRESHNESS_MAX_METAR_AGE_MINUTES)
+        )
+        log.warning(
+            f"{city['name']}: Using cached METAR ({cache_age_minutes:.1f} min old cache)"
+        )
+        return payload
+
+    # Fallback to Open-Meteo current temp
+    try:
+        return await _fallback_current_temp(city)
+    except Exception as e2:
+        log.error(f"{city['name']}: Fallback weather also failed: {e2}")
+        return _empty_result()
 
 
 async def _fallback_current_temp(city: dict) -> dict:
@@ -102,10 +150,12 @@ async def _fallback_current_temp(city: dict) -> dict:
         f"?latitude={city['lat']}&longitude={city['lon']}"
         f"&current=temperature_2m&timezone={city['tz']}"
     )
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        data = r.json()
+    data = await get_json(
+        url,
+        timeout=10,
+        attempts=config.API_RETRY_ATTEMPTS,
+        base_backoff_seconds=config.API_RETRY_BACKOFF_SECONDS,
+    )
 
     temp_c = data.get("current", {}).get("temperature_2m")
     log.warning(f"{city['name']}: Using Open-Meteo fallback: {temp_c}°C")
@@ -116,6 +166,12 @@ async def _fallback_current_temp(city: dict) -> dict:
         "day_high_market": None,
         "observation_count": 0,
         "latest_raw": "Open-Meteo fallback",
+        "source": "open_meteo_fallback",
+        "latest_obs_time_utc": None,
+        "age_minutes": None,
+        "cache_age_minutes": None,
+        "freshness_ok": False,
+        "fetched_at_utc": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -126,4 +182,10 @@ def _empty_result() -> dict:
         "day_high_market": None,
         "observation_count": 0,
         "latest_raw": "",
+        "source": "none",
+        "latest_obs_time_utc": None,
+        "age_minutes": None,
+        "cache_age_minutes": None,
+        "freshness_ok": False,
+        "fetched_at_utc": datetime.now(timezone.utc).isoformat(),
     }

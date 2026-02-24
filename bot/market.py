@@ -5,10 +5,11 @@ Fetches market data (brackets, prices, order books) and places orders via CLOB A
 
 import re
 import json
-import time
 import logging
 import asyncio
 import httpx
+import config
+from http_retry import get_json, get_bytes
 
 log = logging.getLogger("market")
 
@@ -27,6 +28,10 @@ MONTHS = [
     "january", "february", "march", "april", "may", "june",
     "july", "august", "september", "october", "november", "december",
 ]
+
+
+class MarketUnavailableError(ValueError):
+    """Raised when a market event has not opened yet."""
 
 
 def build_slug(city: dict, date_str: str) -> str:
@@ -126,18 +131,20 @@ async def fetch_market(city: dict, date_str: str) -> dict:
     slug = build_slug(city, date_str)
     url = f"{GAMMA_API}?slug={slug}"
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        data = r.json()
+    data = await get_json(
+        url,
+        timeout=15,
+        attempts=config.API_RETRY_ATTEMPTS,
+        base_backoff_seconds=config.API_RETRY_BACKOFF_SECONDS,
+    )
 
     if not data:
-        raise ValueError(f"No event found for {slug}")
+        raise MarketUnavailableError(f"No event found for {slug}")
 
     event = data[0] if isinstance(data, list) else data
     markets = event.get("markets", [])
     if not markets:
-        raise ValueError(f"No markets in event {slug}")
+        raise MarketUnavailableError(f"No markets in event {slug}")
 
     # Validate slug matches city
     ev_slug = event.get("slug", "")
@@ -204,17 +211,20 @@ async def fetch_market(city: dict, date_str: str) -> dict:
     }
 
 
-async def fetch_order_book(token_id: str) -> dict:
+async def fetch_order_book(token_id: str, client: httpx.AsyncClient | None = None) -> dict:
     """
     Fetch CLOB order book for a single token.
     Returns: {"bb": float, "ba": float, "spread": float, "bid_depth": float, "ask_depth": float}
     """
     url = f"{CLOB_HOST}/book?token_id={token_id}"
-
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        data = r.json()
+    data = await get_json(
+        url,
+        timeout=10,
+        attempts=config.API_RETRY_ATTEMPTS,
+        base_backoff_seconds=config.API_RETRY_BACKOFF_SECONDS,
+        no_retry_status_codes={404},
+        client=client,
+    )
 
     bids = sorted(data.get("bids", []), key=lambda x: float(x["price"]), reverse=True)
     asks = sorted(data.get("asks", []), key=lambda x: float(x["price"]))
@@ -238,11 +248,31 @@ async def fetch_order_book(token_id: str) -> dict:
 async def fetch_all_books(token_ids: dict) -> dict[str, dict]:
     """Fetch order books for all brackets. Returns {label: book_data}."""
     books = {}
-    for label, tid in token_ids.items():
-        try:
-            books[label] = await fetch_order_book(tid)
-        except Exception as e:
-            log.warning(f"Book fetch failed for {label}: {e}")
+    if not token_ids:
+        return books
+
+    sem = asyncio.Semaphore(max(1, int(config.BOOK_FETCH_CONCURRENCY)))
+
+    async def _fetch_one(label: str, tid: str, client: httpx.AsyncClient):
+        async with sem:
+            try:
+                return label, await fetch_order_book(tid, client=client), None
+            except Exception as exc:
+                return label, None, exc
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        tasks = [
+            _fetch_one(label, tid, client)
+            for label, tid in token_ids.items()
+        ]
+        results = await asyncio.gather(*tasks)
+
+    for label, book, err in results:
+        if err is not None:
+            log.warning(f"Book fetch failed for {label}: {err}")
+            continue
+        books[label] = book
+
     log.info(f"Order books: {len(books)}/{len(token_ids)}")
     return books
 
@@ -433,12 +463,15 @@ async def fetch_wallet_balance() -> float:
         return -1
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            url = f"https://data-api.polymarket.com/v1/accounting/snapshot?user={proxy_wallet}"
-            resp = await client.get(url)
-            resp.raise_for_status()
+        url = f"https://data-api.polymarket.com/v1/accounting/snapshot?user={proxy_wallet}"
+        payload = await get_bytes(
+            url,
+            timeout=30,
+            attempts=config.API_RETRY_ATTEMPTS,
+            base_backoff_seconds=config.API_RETRY_BACKOFF_SECONDS,
+        )
 
-        z = zipfile.ZipFile(io.BytesIO(resp.content))
+        z = zipfile.ZipFile(io.BytesIO(payload))
         equity_csv = z.read("equity.csv").decode("utf-8").strip()
         reader = csv.DictReader(io.StringIO(equity_csv))
         row = next(reader, None)

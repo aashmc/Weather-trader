@@ -116,6 +116,30 @@ QUALITY_MAX_BRIER = 0.95
 QUALITY_MIN_WINNER_PROB = 0.12
 
 # ══════════════════════════════════════════════════════
+# LATE-SESSION ENTRY GUARD
+# ══════════════════════════════════════════════════════
+LATE_GUARD_ENABLED = True
+LATE_GUARD_HISTORY_DAYS = 365
+LATE_GUARD_REFRESH_HOURS = 24
+LATE_GUARD_CUTOFF_QUANTILE = 0.80
+LATE_GUARD_MIN_MONTH_SAMPLES = 20
+LATE_GUARD_MIN_GLOBAL_SAMPLES = 90
+LATE_GUARD_MIN_CUTOFF_HOUR = 10
+LATE_GUARD_MAX_CUTOFF_HOUR = 20
+LATE_GUARD_DEFAULT_CUTOFF_HOUR = 15
+LATE_GUARD_FALLBACK_CUTOFF_HOURS = {
+    "london": 15,
+    "seoul": 15,
+    "nyc": 16,
+    "seattle": 16,
+}
+LATE_GUARD_FREEZE_HOURS_AFTER_CUTOFF = 6
+LATE_GUARD_AFTER_CUTOFF_FAVORITE_ONLY = True
+LATE_GUARD_AFTER_CUTOFF_MIN_EDGE = 0.08
+LATE_GUARD_AFTER_CUTOFF_FAMILY_BUMP = 1
+LATE_GUARD_FREEZE_ALL_NEW_ENTRIES = True
+
+# ══════════════════════════════════════════════════════
 # BOT MODE
 # ══════════════════════════════════════════════════════
 DRY_RUN = True

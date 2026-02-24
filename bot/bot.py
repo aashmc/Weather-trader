@@ -40,6 +40,7 @@ from alerts import (
     send_telegram,
 )
 from logger import log_cycle, log_resolution, log_fill_update
+from late_guard import get_city_cutoff, build_timing_context
 
 # ══════════════════════════════════════════════════════
 # CONTROL FILE — persists bot state across restarts
@@ -481,6 +482,24 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
         # 3. Fetch METAR
         metar = await fetch_metar(city, date_str)
 
+        # 3b. Build late-session guard context (history-based local cutoff)
+        market_month = int(date_str.split("-")[1])
+        now_local_date = datetime.now(timezone.utc).astimezone(ZoneInfo(city["tz"])).date()
+        market_local_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        refresh_cutoff = now_local_date == market_local_date
+        cutoff_meta = await get_city_cutoff(
+            city_key,
+            city,
+            market_month,
+            refresh_from_api=refresh_cutoff,
+        )
+        late_context = build_timing_context(
+            city=city,
+            date_str=date_str,
+            cutoff_meta=cutoff_meta,
+            observed_day_high_market=metar["day_high_market"],
+        )
+
         # 4. Fetch order books
         books = await fetch_all_books(token_ids)
 
@@ -501,6 +520,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
             existing_positions=existing,
             current_exposure=exposure,
             city_config=city,
+            late_context=late_context,
         )
 
         # Handle maturity failure
@@ -523,6 +543,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                 v5_maturity={"mature": False, "reason": maturity_reason},
                 v5_divergence={"diverged": False, "distance": 0, "model_top": "", "market_fav": ""},
                 v5_candidates=[],
+                v5_late_guard=analysis.get("late_guard", late_context),
             )
             result["status"] = f"immature:{maturity_reason}"
             return result
@@ -554,6 +575,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
                 v5_maturity={"mature": True, "reason": ""},
                 v5_divergence={"diverged": True, "distance": div_dist, "model_top": model_top, "market_fav": market_fav},
                 v5_candidates=[c["label"] for c in analysis.get("candidates", [])],
+                v5_late_guard=analysis.get("late_guard", late_context),
             )
             result["status"] = f"divergence:{div_dist}"
             return result
@@ -753,6 +775,7 @@ async def process_city(city_key: str, city: dict, date_str: str) -> dict:
             v5_maturity={"mature": analysis.get("maturity", (True, ""))[0], "reason": analysis.get("maturity", (True, ""))[1]},
             v5_divergence={"diverged": analysis.get("divergence", (False, 0, "", ""))[0], "distance": analysis.get("divergence", (False, 0, "", ""))[1], "model_top": analysis.get("divergence", (False, 0, "", ""))[2], "market_fav": analysis.get("favorite", "")},
             v5_candidates=[c["label"] for c in analysis.get("candidates", [])],
+            v5_late_guard=analysis.get("late_guard", late_context),
         )
 
         result["status"] = "ok"

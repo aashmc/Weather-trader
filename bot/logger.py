@@ -48,6 +48,7 @@ async def log_cycle(
     v5_maturity: dict = None,
     v5_divergence: dict = None,
     v5_candidates: list = None,
+    v5_late_guard: dict = None,
 ):
     """Log a complete cycle — both summary (Sheets) and full snapshot (local)."""
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -77,6 +78,13 @@ async def log_cycle(
         "v5_diverged": v5_divergence.get("diverged", False) if v5_divergence else False,
         "v5_diverge_dist": v5_divergence.get("distance", 0) if v5_divergence else 0,
         "v5_candidates": ",".join(v5_candidates or []),
+        "v5_late_phase": (v5_late_guard or {}).get("phase", ""),
+        "v5_late_applies": (v5_late_guard or {}).get("applies_today", False),
+        "v5_late_cutoff": (v5_late_guard or {}).get("cutoff_hour"),
+        "v5_late_freeze": (v5_late_guard or {}).get("freeze_hour"),
+        "v5_late_source": (v5_late_guard or {}).get("source", ""),
+        "v5_late_samples": (v5_late_guard or {}).get("samples", 0),
+        "v5_obs_day_high": (v5_late_guard or {}).get("observed_day_high_market"),
     }
 
     # Per-bracket data (all 9)
@@ -133,6 +141,7 @@ async def log_cycle(
             "maturity": v5_maturity or {},
             "divergence": v5_divergence or {},
             "candidates": v5_candidates or [],
+            "late_guard": v5_late_guard or {},
         },
         "ensemble": {
             "mean": round(ensemble_mean, 3),

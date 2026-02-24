@@ -297,6 +297,15 @@ const FILTERS={
   paper:{minEdge:0,minDepth:0,maxAsk:1.0,minModels:0,bankroll:100},
   live:{minEdge:0.05,minDepth:20,maxAsk:0.30,minModels:2,bankroll:25}
 };
+const LATE_GUARD_CONFIG={
+  enabled:true,
+  defaultCutoffHour:15,
+  cutoffByCity:{london:15,seoul:15,nyc:16,seattle:16},
+  freezeHoursAfterCutoff:6,
+  favoriteOnlyAfterCutoff:true,
+  minEdgeAfterCutoff:0.08,
+  freezeAllNewEntries:true,
+};
 function F(){return LIVE_MODE?FILTERS.live:FILTERS.paper}
 
 let prices={},books={},rawProbs={},corrProbs={},ensMean=0,ensCount=0;
@@ -327,6 +336,13 @@ function fToC(f){return(f-32)*5/9}
 function ensToMarket(tempC){return CITY.unit==="F"?cToF(tempC):tempC}
 function unitLabel(){return"°"+CITY.unit}
 function clip(x,lo,hi){return Math.max(lo,Math.min(hi,x))}
+function localDateInTZ(tz){return new Date().toLocaleDateString("en-CA",{timeZone:tz})}
+function localHourInTZ(tz){
+  const parts=new Intl.DateTimeFormat("en-GB",{timeZone:tz,hour12:false,hour:"2-digit",minute:"2-digit"}).formatToParts(new Date());
+  const hh=parseInt((parts.find(p=>p.type==="hour")||{}).value||"0",10);
+  const mm=parseInt((parts.find(p=>p.type==="minute")||{}).value||"0",10);
+  return hh+mm/60;
+}
 
 function topAskDepth(book,ask){
   if(!book||!book.asks)return 0;
@@ -409,6 +425,17 @@ function bracketRange(){
   return{min:mn-5,max:mx+5}; // padding for Monte Carlo tails
 }
 
+function isImpossibleAfterObservedHigh(label,observedHigh){
+  if(observedHigh==null)return false;
+  const p=parseBracket(label);if(!p)return false;
+  const obs=parseFloat(observedHigh);
+  if(Number.isNaN(obs))return false;
+  if(p.type==="below")return obs>p.high;
+  if(p.type==="single")return obs>p.val;
+  if(p.type==="range")return obs>p.high;
+  return false;
+}
+
 // ══════════════════════════════════════════════════════════
 // CITY SWITCHING
 // ══════════════════════════════════════════════════════════
@@ -469,6 +496,12 @@ function applyFilters(a){
   if(a.askD<f.minDepth&&f.minDepth>0)reasons.push(`Depth ${a.askD.toFixed(0)} < ${f.minDepth} min`);
   if(a.ask>f.maxAsk&&f.maxAsk<1)reasons.push(`Ask ${(a.ask*100).toFixed(0)}¢ > ${(f.maxAsk*100)}¢ max`);
   if(f.minModels>0&&a.modelVotes!==undefined&&a.modelVotes<f.minModels)reasons.push(`Only ${a.modelVotes}/${CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0)} models agree (need ${f.minModels})`);
+  if(a.lateImpossible)reasons.push(`Observed high ${a.observedHighText} already above bracket`);
+  if(a.latePhase==="freeze"&&LATE_GUARD_CONFIG.freezeAllNewEntries)reasons.push("Late freeze window");
+  if(a.latePhase==="after_cutoff"&&LATE_GUARD_CONFIG.favoriteOnlyAfterCutoff&&!a.isFavorite)reasons.push("Late cutoff: non-favorite blocked");
+  if((a.latePhase==="after_cutoff"||a.latePhase==="freeze")&&a.trueEdge<LATE_GUARD_CONFIG.minEdgeAfterCutoff){
+    reasons.push(`Late edge ${(a.trueEdge*100).toFixed(1)}pt < ${(LATE_GUARD_CONFIG.minEdgeAfterCutoff*100).toFixed(0)}pt`);
+  }
   return{pass:reasons.length===0&&a.trueEdge>0,reasons};
 }
 
@@ -844,6 +877,17 @@ function render(){
   if(!Object.keys(corrProbs).length&&!Object.keys(rawProbs).length)return;
   const useRaw=!Object.keys(corrProbs).length; // if no corrected, use raw
   const ma=window._modelAgreement||{};
+  const favoriteLabel=B.reduce((best,label)=>{
+    const bk=books[label],ask=bk?bk.ba:(prices[label]||0);
+    if(ask>best.ask)return{label,ask};
+    return best;
+  },{label:null,ask:-1}).label;
+  const nowLocalHour=localHourInTZ(CITY.tz);
+  const localDateNow=localDateInTZ(CITY.tz);
+  const cutoffHour=LATE_GUARD_CONFIG.cutoffByCity[CITY.polyCity]??LATE_GUARD_CONFIG.defaultCutoffHour;
+  const freezeHour=Math.min(23,cutoffHour+LATE_GUARD_CONFIG.freezeHoursAfterCutoff);
+  const lateApplies=LATE_GUARD_CONFIG.enabled&&localDateNow===ACTIVE_DATE.dateStr;
+  const latePhase=lateApplies?(nowLocalHour>=freezeHour?"freeze":nowLocalHour>=cutoffHour?"after_cutoff":"normal"):"inactive";
   const A=B.map(b=>{
     const rawP=rawProbs[b]||0,corP=(useRaw?rawP:corrProbs[b])||0,bk=books[b],mkt=prices[b]||0;
     const ask=bk?bk.ba:mkt,bid=bk?bk.bb:0,mid=bk?bk.mid:mkt;
@@ -852,6 +896,8 @@ function render(){
     const pb=parseBracket(b);
     const deg=pb?(pb.val??pb.low??pb.high??0):0;
     const modelVotes=ma[deg]||0;
+    const isFavorite=b===favoriteLabel;
+    const lateImpossible=lateApplies?isImpossibleAfterObservedHigh(b,metarDayMax):false;
     // Check neighboring degrees for range brackets
     let mv=modelVotes;
     if(pb&&pb.type==="range"){for(let d=pb.low;d<=pb.high;d++)mv=Math.max(mv,ma[d]||0)}
@@ -907,7 +953,8 @@ function render(){
     const row={bracket:b,rawP,corP,mktP:prices[b]||0,bid,ask,mid,spread:bk?bk.spd:0,
       rawEdge,baseTrueEdge,trueEdge,edgeAfterCosts,effectiveAsk,fillFraction,immediateFillFraction,
       continuationFillProb,feePerContract,gasPerContract,slippagePenalty,executionAdjusted:EXEC_CONFIG.enabled,
-      bet,ev,sig,fFull,contracts,bidD:bk?bk.bidD:0,askD:bk?bk.askD:0,last:bk?bk.last:0,modelVotes:mv};
+      bet,ev,sig,fFull,contracts,bidD:bk?bk.bidD:0,askD:bk?bk.askD:0,last:bk?bk.last:0,modelVotes:mv,
+      isFavorite,latePhase,lateImpossible,observedHighText:metarDayMax==null?"—":String(metarDayMax)};
     if(LIVE_MODE&&(sig==="BUY"||sig==="LEAN")){
       const filt=applyFilters(row);
       if(!filt.pass){row.sig="FILTERED";row.filterReasons=filt.reasons;row.bet=0;row.ev=0}
@@ -995,12 +1042,24 @@ function render(){
   // Entry timing (live mode)
   const et=$("entryTiming");
   if(LIVE_MODE){
-    et.style.display="block";const hr=new Date().getUTCHours();
+    et.style.display="block";
     let msg="",col="",bg="";
-    if(hr>=15&&hr<20){msg="OPTIMAL ENTRY — 12Z data available";col="var(--gn)";bg="rgba(22,163,74,.04)"}
-    else if(hr>=20&&hr<23){msg="LATE ENTRY — limit orders may not fill";col="var(--dm)";bg="rgba(39,39,42,.5)"}
-    else if(hr>=10&&hr<15){msg="EARLY — wait for 12Z data (15:00-20:00 UTC)";col="var(--dm)";bg="rgba(39,39,42,.5)"}
-    else{msg="OFF-HOURS — best window: 15:00-20:00 UTC";col="var(--rd)";bg="rgba(220,38,38,.04)"}
+    if(!lateApplies){
+      msg=`Late guard inactive for this date (local ${localDateNow}).`;
+      col="var(--dm)";bg="rgba(39,39,42,.04)";
+    }else if(latePhase==="normal"){
+      msg=`Normal window (${CITY.tz}) — cutoff ${cutoffHour}:00 local.`;
+      col="var(--gn)";bg="rgba(22,163,74,.04)";
+    }else if(latePhase==="after_cutoff"){
+      msg=`Late window (${CITY.tz}) — only favorite bracket allowed after ${cutoffHour}:00.`;
+      col="var(--am)";bg="rgba(180,83,9,.06)";
+    }else{
+      msg=`Freeze window (${CITY.tz}) — no new entries after ${freezeHour}:00 local.`;
+      col="var(--rd)";bg="rgba(220,38,38,.04)";
+    }
+    if(lateApplies&&metarDayMax!=null){
+      msg+=` Observed high: ${metarDayMax}${unitLabel()}.`;
+    }
     et.style.color=col;et.style.borderColor=col;et.style.background=bg;et.textContent=msg;
   }else{et.style.display="none"}
   $("stopLossWarn").style.display="none";

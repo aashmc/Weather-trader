@@ -227,6 +227,27 @@ def check_divergence(
     return diverged, distance, model_top_label, market_fav_label
 
 
+def _is_impossible_after_observed_high(bracket: dict, observed_high_market: float | None) -> bool:
+    """
+    If observed day-high already exceeds this bracket's top bound, the bracket
+    can no longer win for today's highest-temperature market.
+    """
+    if observed_high_market is None:
+        return False
+    try:
+        obs = float(observed_high_market)
+    except (TypeError, ValueError):
+        return False
+
+    if bracket.get("type") == "below":
+        return obs > float(bracket["high"])
+    if bracket.get("type") == "single":
+        return obs > float(bracket["val"])
+    if bracket.get("type") == "range":
+        return obs > float(bracket["high"])
+    return False
+
+
 # ══════════════════════════════════════════════════════
 # MAIN ANALYSIS PIPELINE
 # ══════════════════════════════════════════════════════
@@ -244,6 +265,7 @@ def analyze_brackets(
     existing_positions: set[str],
     current_exposure: float,
     city_config: dict,
+    late_context: dict | None = None,
 ) -> dict:
     """
     Full v5 signal pipeline. Returns a dict with:
@@ -265,6 +287,7 @@ def analyze_brackets(
         "divergence": (False, 0, "", ""),
         "signals": [],
         "actionable": [],
+        "late_guard": late_context or {},
     }
 
     # ── Step 1: Market maturity ──
@@ -314,6 +337,27 @@ def analyze_brackets(
     candidate_labels = {c["label"] for c in candidates}
     result["candidates"] = candidates
     log.info(f"  Candidates: {[c['label'] for c in candidates]}")
+
+    # ── Late-session guard context ──
+    late = late_context or {}
+    late_applies = (
+        config.LATE_GUARD_ENABLED
+        and bool(late.get("enabled", True))
+        and bool(late.get("applies_today", False))
+    )
+    late_phase = late.get("phase", "inactive") if late_applies else "inactive"
+    late_cutoff_hour = late.get("cutoff_hour")
+    late_freeze_hour = late.get("freeze_hour")
+    observed_day_high_market = late.get("observed_day_high_market")
+
+    if late_applies:
+        log.info(
+            "  Late guard: %s (cutoff %s, freeze %s, obs_high=%s)",
+            late_phase,
+            late_cutoff_hour,
+            late_freeze_hour,
+            observed_day_high_market,
+        )
 
     # ── Step 4 + 6: Analyze each candidate ──
     min_models = city_config.get("min_models", 2)
@@ -421,18 +465,27 @@ def analyze_brackets(
             expected_profit = round(contracts * fill_fraction * edge_after_costs, 2) if contracts > 0 else 0.0
 
         # Filter checks
+        edge_threshold = min_edge
+        family_threshold = min_families
+        if late_applies and late_phase in ("after_cutoff", "freeze"):
+            edge_threshold = max(edge_threshold, config.LATE_GUARD_AFTER_CUTOFF_MIN_EDGE)
+            family_threshold = min(
+                total_families,
+                family_threshold + max(0, config.LATE_GUARD_AFTER_CUTOFF_FAMILY_BUMP),
+            )
+
         filter_reasons = []
-        if true_edge < min_edge:
+        if true_edge < edge_threshold:
             filter_reasons.append(
-                f"edge {true_edge*100:.1f}pt < {min_edge*100:.0f}pt"
+                f"edge {true_edge*100:.1f}pt < {edge_threshold*100:.0f}pt"
             )
         if mv < min_models:
             filter_reasons.append(
                 f"models {mv}/{total_models} < {min_models}"
             )
-        if fv < min_families:
+        if fv < family_threshold:
             filter_reasons.append(
-                f"families {fv}/{total_families} < {min_families}"
+                f"families {fv}/{total_families} < {family_threshold}"
             )
         if ask_depth < MIN_ASK_DEPTH:
             filter_reasons.append(
@@ -448,6 +501,24 @@ def analyze_brackets(
             filter_reasons.append("kelly ≤ 0")
         if remaining_budget <= 0:
             filter_reasons.append("max exposure")
+
+        if _is_impossible_after_observed_high(b, observed_day_high_market):
+            filter_reasons.append(
+                f"observed high {observed_day_high_market} already above bracket"
+            )
+
+        if late_applies:
+            if (
+                late_phase == "freeze"
+                and config.LATE_GUARD_FREEZE_ALL_NEW_ENTRIES
+            ):
+                filter_reasons.append("late freeze window")
+            elif (
+                late_phase in ("after_cutoff", "freeze")
+                and config.LATE_GUARD_AFTER_CUTOFF_FAVORITE_ONLY
+                and label != fav_label
+            ):
+                filter_reasons.append("late cutoff: non-favorite blocked")
 
         passed = len(filter_reasons) == 0 and true_edge > 0
         signal = "BUY" if passed else ("FILTERED" if true_edge > 0 else "PASS")
@@ -487,6 +558,10 @@ def analyze_brackets(
             "contracts": contracts,
             "filter_reasons": filter_reasons,
             "is_favorite": (label == fav_label),
+            "edge_threshold": edge_threshold,
+            "family_threshold": family_threshold,
+            "late_phase": late_phase,
+            "late_applies": late_applies,
         }
         signals.append(sig_dict)
 

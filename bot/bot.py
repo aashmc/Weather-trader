@@ -719,11 +719,21 @@ async def process_city(city_key: str, city: dict, date_str: str, live_guard: dic
         # 7. Handle signals based on mode
         trades_placed = []
         if tradeable and signals:
-            # Clear old pending for this city/date before adding new ones
+            # Keep pending IDs stable for the same city/date/bracket.
+            # Remove only stale pending brackets that are no longer actionable.
             if mode == "manual":
                 pending = load_pending()
-                pending = [p for p in pending if not (p.get("city") == city_name and p.get("date") == date_str)]
-                save_pending(pending)
+                keep_brackets = {s.get("bracket") for s in signals}
+                trimmed = [
+                    p for p in pending
+                    if not (
+                        p.get("city") == city_name
+                        and p.get("date") == date_str
+                        and p.get("bracket") not in keep_brackets
+                    )
+                ]
+                if len(trimmed) != len(pending):
+                    save_pending(trimmed)
 
             for sig in signals:
                 bracket = sig["bracket"]

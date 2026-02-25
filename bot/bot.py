@@ -952,31 +952,34 @@ async def check_pending_orders():
         except (ValueError, KeyError):
             elapsed = 0
 
+        # Always check current status first to avoid cancelling already-filled orders.
+        status = await check_order_status(order_id)
+        if status not in ("open", "unknown"):
+            update_fill_status(
+                pos["city"], pos["market_date"], pos["bracket"], status
+            )
+            await log_fill_update(
+                pos["city"], pos["market_date"], pos["bracket"],
+                order_id, status,
+            )
+            await alert_order_update(pos["bracket"], status, order_id)
+            continue
+
         if elapsed > ORDER_TIMEOUT_SECONDS:
-            # Cancel the order
+            # Timed out while still unresolved: try cancel, then re-check actual terminal status.
             log.info(f"Order timeout ({elapsed:.0f}s): cancelling {order_id}")
             cancelled = await cancel_order(order_id)
             if cancelled:
+                post_status = await check_order_status(order_id)
+                final_status = post_status if post_status not in ("open", "unknown") else "cancelled"
                 update_fill_status(
-                    pos["city"], pos["market_date"], pos["bracket"], "cancelled"
+                    pos["city"], pos["market_date"], pos["bracket"], final_status
                 )
                 await log_fill_update(
                     pos["city"], pos["market_date"], pos["bracket"],
-                    order_id, "cancelled_timeout",
+                    order_id, f"{final_status}_timeout",
                 )
-                await alert_order_update(pos["bracket"], "cancelled (timeout)", order_id)
-        else:
-            # Check if filled
-            status = await check_order_status(order_id)
-            if status != "open" and status != "unknown":
-                update_fill_status(
-                    pos["city"], pos["market_date"], pos["bracket"], status
-                )
-                await log_fill_update(
-                    pos["city"], pos["market_date"], pos["bracket"],
-                    order_id, status,
-                )
-                await alert_order_update(pos["bracket"], status, order_id)
+                await alert_order_update(pos["bracket"], f"{final_status} (timeout)", order_id)
 
 
 async def check_resolutions():

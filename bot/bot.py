@@ -149,10 +149,34 @@ def clear_pending():
 
 
 def add_pending(sig: dict):
+    upsert_pending(sig)
+
+
+def upsert_pending(sig: dict) -> tuple[int, bool]:
+    """
+    Insert a new pending signal or update an existing one for the same city/date/bracket.
+    Returns (pending_id, is_new).
+    """
     pending = load_pending()
+    for existing in pending:
+        if (
+            existing.get("city") == sig.get("city")
+            and existing.get("date") == sig.get("date")
+            and existing.get("bracket") == sig.get("bracket")
+        ):
+            pid = int(existing.get("pending_id") or 0)
+            if pid <= 0:
+                pid = _allocate_pending_id(pending)
+            existing.clear()
+            existing.update(sig)
+            existing["pending_id"] = pid
+            save_pending(pending)
+            return pid, False
+
     sig["pending_id"] = _allocate_pending_id(pending)
     pending.append(sig)
     save_pending(pending)
+    return sig["pending_id"], True
 
 
 # ══════════════════════════════════════════════════════
@@ -749,8 +773,13 @@ async def process_city(city_key: str, city: dict, date_str: str, live_guard: dic
                         "kelly_multiplier": sig.get("kelly_multiplier", 0),
                         "is_favorite": sig.get("is_favorite", False),
                     }
-                    add_pending(pending_sig)
-                    pid = load_pending()[-1]["pending_id"]
+                    pid, is_new = upsert_pending(pending_sig)
+                    if not is_new:
+                        log.info(
+                            f"↻ UPDATED #{pid}: {bracket}{fav_tag} @ {sig['ask']:.3f} "
+                            f"x{sig['contracts']} = ${sig['kelly_bet']:.2f}"
+                        )
+                        continue
 
                     log.info(
                         f"👆 QUEUED #{pid}: {bracket}{fav_tag} @ {sig['ask']:.3f} "
@@ -1113,8 +1142,10 @@ async def run_cycle():
                 log.error(f"Unhandled error in {city['name']} {date_str}: {e}")
                 await alert_error(f"Cycle error: {city['name']} {date_str} — {e}")
 
-    # Check pending orders from previous cycles (skip in dry run)
-    if mode == "auto":
+    # Check pending orders from previous cycles (skip in dry run).
+    # Manual mode still places real orders after Telegram approvals,
+    # so those orders must be reconciled too.
+    if mode in ("auto", "manual"):
         await check_pending_orders()
 
     # Check resolutions

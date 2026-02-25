@@ -112,6 +112,7 @@ ADAPTIVE_SPREAD_EDGE_SLOPE = 0.50       # Every 1c extra spread adds 0.5c requir
 ADAPTIVE_DEPTH_EDGE_MAX = 0.02          # Up to +2c required edge for thin books
 ADAPTIVE_LATE_EDGE_ADDER = 0.01         # +1c after local cutoff
 ADAPTIVE_NONFAV_LATE_EDGE_ADDER = 0.01  # Additional +1c for non-favorites after cutoff
+NONFAVORITE_EDGE_ADVANTAGE_REQUIRED = 0.03  # Require non-fav to beat favorite edge by 3pt when favorite has positive edge
 
 # Model/family agreement now scales size instead of hard-blocking
 AGREEMENT_SCALE_FLOOR = 0.35            # Weak-but-nonzero agreement keeps 35% size floor

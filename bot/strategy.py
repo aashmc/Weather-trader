@@ -749,6 +749,28 @@ def analyze_brackets(
         if passed and kelly_bet > 0:
             remaining_budget -= kelly_bet
 
+    # Guardrail: avoid weak non-favorite picks when favorite still has positive edge.
+    # This reduces repeated contrarian stabs unless non-favorite edge is materially better.
+    nonfav_adv_req = float(
+        city_config.get(
+            "nonfavorite_edge_advantage_required",
+            config.NONFAVORITE_EDGE_ADVANTAGE_REQUIRED,
+        )
+    )
+    if nonfav_adv_req > 0:
+        favorite_signal = next((s for s in signals if s["is_favorite"]), None)
+        favorite_edge = favorite_signal.get("true_edge", 0.0) if favorite_signal else 0.0
+        if favorite_edge > 0:
+            floor = favorite_edge + nonfav_adv_req
+            for s in signals:
+                if s["signal"] != "BUY" or s["is_favorite"]:
+                    continue
+                if s["true_edge"] < floor:
+                    s["signal"] = "FILTERED"
+                    s["filter_reasons"].append(
+                        f"non-favorite edge {s['true_edge']*100:.1f}pt < favorite+{nonfav_adv_req*100:.0f}pt"
+                    )
+
     # Sort by edge descending
     signals.sort(key=lambda r: r["true_edge"], reverse=True)
     result["signals"] = signals

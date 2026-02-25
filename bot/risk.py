@@ -169,8 +169,14 @@ def record_resolution(city_name: str, date_str: str, winner: str):
         contracts = pos.get("contracts", 0)
         fill = pos.get("fill_status", "pending")
 
-        # Only count filled or assumed-filled trades
-        if fill in ("pending", "cancelled"):
+        # Only count confidently filled trades.
+        # "pending"/"partial"/"cancelled" are treated as no-fill until
+        # we have matched-size accounting in state.
+        if fill in ("pending", "partial", "cancelled"):
+            if fill == "pending":
+                log.warning(f"Resolution skipped PnL for pending order: {key}")
+            elif fill == "partial":
+                log.warning(f"Resolution skipped PnL for partial order (no filled-size tracking): {key}")
             pos["resolved"] = True
             pos["pnl"] = 0.0
             continue

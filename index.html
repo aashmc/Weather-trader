@@ -5,626 +5,515 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Weather Trader</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
 :root{
-  --bg:#f6f8f2;
-  --canvas:#fffef8;
-  --ink:#10221d;
-  --muted:#53645f;
-  --muted2:#7c8f89;
-  --line:#c8d1cb;
-  --line-soft:#dde4df;
-  --panel:#ffffff;
-  --panel-2:#f1f6f3;
-  --brand:#0e8f78;
-  --brand-soft:rgba(14,143,120,.13);
-  --warn:#c17818;
-  --danger:#cb3a3a;
-  --good:#0b8f4d;
-  --glow:0 10px 24px rgba(18,34,29,.06);
+  --bg:#f4f1e8;
+  --bg-soft:#edf5ef;
+  --surface:#ffffff;
+  --surface-soft:#f9fbfa;
+  --ink:#18261f;
+  --tx:#18261f;
+  --dm:#5a6c64;
+  --muted:#758680;
+  --line:#d2dbd6;
+  --bd:#b8c6c0;
+  --brand:#0b7f6a;
+  --brand-soft:#dff1ec;
+  --h1:#2f6fb3;
+  --h2:#0e958f;
+  --gn:#0f8a47;
+  --rd:#c4403b;
+  --am:#b86a16;
+  --warn-bg:#fff3dc;
+  --danger-bg:#fdecea;
+  --ok-bg:#e9f7ef;
+  --shadow:0 12px 28px rgba(15,27,21,.09);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{
-  min-height:100vh;
+  font-family:'Outfit',sans-serif;
   color:var(--ink);
-  font-family:'Sora',sans-serif;
   background:
-    linear-gradient(145deg,rgba(14,143,120,.08) 0%,transparent 33%),
-    linear-gradient(330deg,rgba(193,120,24,.06) 0%,transparent 30%),
-    var(--bg);
+    radial-gradient(1100px 400px at -10% -20%,rgba(15,127,106,.22),transparent 55%),
+    radial-gradient(760px 360px at 110% 10%,rgba(47,111,179,.16),transparent 60%),
+    linear-gradient(180deg,var(--bg),var(--bg-soft));
+  padding:22px;
+}
+.app-shell{
+  width:min(1480px,100%);
+  margin:0 auto;
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+.panel,.pn{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:16px;
+  box-shadow:var(--shadow);
+}
+.top-band{
   display:grid;
-  grid-template-columns:260px minmax(0,1fr);
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:18px;
+  padding:18px 20px;
 }
-.sidebar{
-  border-right:2px solid #273b35;
-  background:#162925;
-  color:#d8e5e0;
-  padding:20px 14px;
-  min-height:100vh;
-  position:sticky;
-  top:0;
-  height:100vh;
-}
-.sb-title{
-  font-family:'IBM Plex Mono',monospace;
-  text-transform:uppercase;
-  letter-spacing:2px;
-  color:#9bb2aa;
+.eyebrow{
+  font-family:'JetBrains Mono',monospace;
   font-size:10px;
-  margin:0 8px 12px;
+  letter-spacing:1.4px;
+  text-transform:uppercase;
+  color:var(--muted);
+  margin-bottom:6px;
+}
+#hdrTitle{
+  font-size:34px;
+  line-height:1.05;
+  letter-spacing:-.02em;
+  font-weight:800;
+}
+#hdrTitle span{font-weight:500;color:var(--muted)}
+.status-side{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.status-list{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+#badge{
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;
+  color:#0c6c5a;
+  background:var(--brand-soft);
+  border:1px solid rgba(11,127,106,.35);
+  border-radius:999px;
+  padding:6px 12px;
+}
+#stationInfo,#ut{
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;
+  color:var(--dm);
+}
+.city-panel{padding:14px 16px}
+#cityNav{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(175px,1fr));
+  gap:8px;
 }
 .sb-item{
   display:flex;
   align-items:center;
   gap:10px;
-  padding:11px 10px;
-  border:1px solid transparent;
-  border-radius:0;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:var(--surface-soft);
+  padding:11px 12px;
   cursor:pointer;
-  color:#ccdad5;
-  transition:.15s;
+  transition:.16s ease;
 }
-.sb-item:hover{border-color:#3a514a;background:rgba(255,255,255,.03);color:#fff}
+.sb-item:hover{transform:translateY(-1px);border-color:#97b0a6;background:#f2f7f4}
 .sb-item.active{
-  border-color:#8be0ce;
-  background:linear-gradient(90deg,rgba(139,224,206,.16),rgba(139,224,206,.02));
-  color:#f6fffc;
+  border-color:rgba(11,127,106,.5);
+  background:linear-gradient(90deg,rgba(11,127,106,.12),rgba(11,127,106,.03));
 }
 .sb-flag{font-size:16px}
 .sb-meta{
-  font-family:'IBM Plex Mono',monospace;
+  font-family:'JetBrains Mono',monospace;
   font-size:9px;
-  color:#97aca5;
-}
-.main{
-  width:min(100%,1500px);
-  padding:24px 28px 34px;
-}
-.hdr{
-  border:2px solid #273b35;
-  background:var(--canvas);
-  padding:16px 18px;
-  margin-bottom:14px;
-  display:flex;
-  justify-content:space-between;
-  gap:16px;
-  box-shadow:var(--glow);
-}
-.hdr h1{
-  font-family:'IBM Plex Mono',monospace;
-  text-transform:uppercase;
-  letter-spacing:2px;
-  color:var(--muted2);
-  font-size:10px;
-  margin-bottom:5px;
-}
-.hdr h2{
-  font-size:34px;
-  line-height:1.05;
-  letter-spacing:-.02em;
-  font-weight:700;
-}
-.hdr h2 span{font-weight:500;color:var(--muted)}
-.hr{
-  text-align:right;
-  font-family:'IBM Plex Mono',monospace;
-  font-size:10px;
   color:var(--muted);
-  line-height:1.8;
 }
-.lb{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-}
-.lb::before{
-  content:'';
-  width:8px;
-  height:8px;
-  border-radius:0;
-  background:var(--good);
-  animation:p 1.6s steps(2,end) infinite;
-}
-@keyframes p{
-  0%,49%{opacity:1}
-  50%,100%{opacity:.2}
-}
-.chips{
-  display:flex;
-  flex-wrap:wrap;
-  gap:9px;
-  margin-bottom:12px;
-}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;
   border:1px solid var(--line);
-  background:var(--panel);
-  padding:8px 11px;
-  border-radius:2px;
-  font-family:'IBM Plex Mono',monospace;
-  font-size:10px;
-  color:var(--muted);
+  border-radius:999px;
+  padding:7px 12px;
+  background:var(--surface);
+  color:var(--dm);
 }
-.chip b{color:var(--ink)}
-.chip-live{border-color:rgba(11,143,77,.45);background:rgba(11,143,77,.08);color:var(--good)}
-.chip-pause{border-color:rgba(203,58,58,.45);background:rgba(203,58,58,.08);color:var(--danger)}
-.chip-info{border-color:rgba(14,143,120,.45);background:rgba(14,143,120,.08);color:var(--brand)}
+.chip b{color:var(--tx)}
+.chip-live{background:var(--ok-bg);border-color:rgba(15,138,71,.35);color:var(--gn)}
+.chip-pause{background:var(--danger-bg);border-color:rgba(196,64,59,.35);color:var(--rd)}
+.chip-info{background:var(--brand-soft);border-color:rgba(11,127,106,.35);color:var(--brand)}
 .warn{
-  border:1px solid var(--line);
-  background:var(--panel-2);
-  color:var(--muted);
+  border:1px solid #ecd39f;
+  background:var(--warn-bg);
+  color:#79531a;
+  border-radius:12px;
   padding:10px 12px;
-  margin-bottom:12px;
-  font-family:'IBM Plex Mono',monospace;
-  font-size:10px;
-  line-height:1.5;
-  border-radius:2px;
+  font-size:12px;
+  line-height:1.45;
 }
-.warn b{color:var(--ink)}
-.note-active{border-color:#6f8f87;background:#eaf4f0;color:#1f4f43}
-.dtabs{
-  display:flex;
-  gap:7px;
-  overflow-x:auto;
-  margin-bottom:12px;
-  padding-bottom:3px;
+.warn b{color:#4c330f}
+.note-active{
+  border-color:#8ab7a8;
+  background:#eaf7f2;
+  color:#1e5b4b;
 }
-.dtab{
-  border:1px solid var(--line);
-  background:var(--panel);
-  color:var(--muted);
-  padding:7px 11px;
-  border-radius:2px;
-  white-space:nowrap;
-  cursor:pointer;
-  transition:.12s;
-  font-family:'IBM Plex Mono',monospace;
-  font-size:10px;
-}
-.dtab:hover{border-color:#8ea39d;color:var(--ink)}
-.dtab.active{
-  background:#152724;
-  border-color:#152724;
-  color:#f2fbf7;
-}
-.dtab .dtag{
-  font-size:7px;
-  margin-left:4px;
-  padding:1px 4px;
-  border-radius:2px;
-  letter-spacing:.4px;
-}
-.dtab .dtag-today{background:rgba(11,143,77,.22);color:#146a40}
-.dtab .dtag-past{background:rgba(83,100,95,.18);color:#445854}
-.dtab .dtag-future{background:rgba(14,143,120,.2);color:#166d5d}
-.stats{
+.workspace{
   display:grid;
-  grid-template-columns:repeat(4,minmax(170px,1fr));
-  gap:9px;
-  margin-bottom:12px;
+  grid-template-columns:minmax(0,1.7fr) minmax(320px,1fr);
+  gap:12px;
+  align-items:start;
 }
+.panel-main{padding:14px;display:flex;flex-direction:column;gap:10px}
+.side-stack{display:flex;flex-direction:column;gap:10px}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(130px,1fr));gap:8px}
 .st{
   border:1px solid var(--line);
-  background:var(--panel);
-  padding:12px;
-  border-left:5px solid #1e3e38;
-  border-radius:2px;
+  border-radius:12px;
+  padding:11px;
+  background:var(--surface-soft);
 }
 .st-l{
-  font-family:'IBM Plex Mono',monospace;
+  font-family:'JetBrains Mono',monospace;
+  font-size:9px;
   text-transform:uppercase;
-  letter-spacing:1.2px;
-  font-size:8px;
-  color:var(--muted2);
+  letter-spacing:1px;
+  color:var(--muted);
   margin-bottom:5px;
 }
-.st-v{
-  font-family:'IBM Plex Mono',monospace;
-  font-size:18px;
-  font-weight:600;
+.st-v{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700}
+.st-s{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);margin-top:4px}
+.dtabs{display:flex;gap:7px;overflow-x:auto;padding-bottom:2px}
+.dtab{
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:var(--surface);
+  color:var(--dm);
+  padding:7px 11px;
+  white-space:nowrap;
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;
+  cursor:pointer;
 }
-.st-s{
-  font-family:'IBM Plex Mono',monospace;
-  font-size:9px;
-  color:var(--muted2);
-  margin-top:3px;
-}
+.dtab:hover{border-color:#93aba2;color:var(--ink)}
+.dtab.active{background:var(--ink);border-color:var(--ink);color:#f4fbf8}
+.dtab .dtag{font-size:8px;margin-left:4px;padding:2px 5px;border-radius:999px}
+.dtab .dtag-today{background:rgba(15,138,71,.16);color:var(--gn)}
+.dtab .dtag-past{background:rgba(90,108,100,.16);color:#506159}
+.dtab .dtag-future{background:rgba(11,127,106,.16);color:var(--brand)}
 .sb-sig{
-  border:2px solid #273b35;
-  background:var(--canvas);
-  padding:12px 14px;
-  margin-bottom:12px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:linear-gradient(135deg,#f5faf8,#ffffff);
+  padding:12px;
   display:flex;
+  flex-wrap:wrap;
+  gap:10px;
   justify-content:space-between;
   align-items:center;
-  gap:10px;
-  flex-wrap:wrap;
 }
 .sg-t{
-  font-family:'IBM Plex Mono',monospace;
-  text-transform:uppercase;
-  letter-spacing:1.4px;
+  font-family:'JetBrains Mono',monospace;
   font-size:9px;
-  color:var(--muted2);
-  margin-bottom:2px;
-}
-.sg-n{font-size:26px;line-height:1.05;font-weight:700}
-.sg-d{display:flex;gap:14px;flex-wrap:wrap}
-.sg-reasons{
-  width:100%;
-  font-family:'IBM Plex Mono',monospace;
-  font-size:10px;
+  text-transform:uppercase;
+  letter-spacing:1.2px;
   color:var(--muted);
+  margin-bottom:3px;
 }
+.sg-n{font-size:28px;font-weight:800;line-height:1}
+.sg-d{display:flex;gap:12px;flex-wrap:wrap}
 .si{text-align:right}
-.si-l{
-  font-family:'IBM Plex Mono',monospace;
-  text-transform:uppercase;
-  letter-spacing:1.4px;
-  font-size:8px;
-  color:var(--muted2);
-}
-.si-v{
-  font-family:'IBM Plex Mono',monospace;
-  font-size:14px;
-  font-weight:600;
-}
-.pn{
-  border:1px solid var(--line);
-  background:var(--panel);
-  padding:14px;
-  margin-bottom:12px;
-  border-radius:2px;
-  box-shadow:var(--glow);
-}
+.si-l{font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.si-v{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700}
+.sg-reasons{width:100%;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dm)}
+.pn{padding:13px}
 .pt{
-  font-family:'IBM Plex Mono',monospace;
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;
   text-transform:uppercase;
-  letter-spacing:1.6px;
-  font-size:9px;
-  color:var(--muted2);
-  margin-bottom:10px;
+  letter-spacing:1.2px;
+  color:var(--muted);
+  margin-bottom:9px;
 }
-table{width:100%;border-collapse:separate;border-spacing:0}
+.table-scroll{overflow:auto}
+table{width:100%;border-collapse:separate;border-spacing:0;min-width:940px}
 thead th{
   position:sticky;
   top:0;
   z-index:1;
-  background:#1a2f2a;
-  color:#d2e2dd;
-  padding:10px 6px;
-  border-bottom:1px solid #1a2f2a;
+  background:#e7f3ee;
+  border-bottom:1px solid #c9ddd4;
+  color:#25463c;
+  padding:9px 6px;
   text-align:right;
-  font-family:'IBM Plex Mono',monospace;
+  font-family:'JetBrains Mono',monospace;
   font-size:9px;
-  letter-spacing:.6px;
   text-transform:uppercase;
+  letter-spacing:.6px;
 }
 thead th:first-child{text-align:left}
 tbody td{
+  border-bottom:1px solid #e7efea;
   padding:8px 6px;
-  border-bottom:1px solid var(--line-soft);
-  color:var(--muted);
   text-align:right;
-  font-family:'IBM Plex Mono',monospace;
+  color:var(--dm);
+  font-family:'JetBrains Mono',monospace;
   font-size:11px;
 }
-tbody tr:nth-child(even) td{background:#f8fbf8}
-tbody td:first-child{text-align:left;color:var(--ink);font-weight:600}
-.tb{
-  display:inline-block;
-  font-size:8px;
-  font-weight:700;
-  border-radius:2px;
-  padding:2px 6px;
-  letter-spacing:.4px;
-}
-.tb-b{background:rgba(11,143,77,.14);color:var(--good)}
-.tb-s{background:rgba(203,58,58,.14);color:var(--danger)}
-.tb-l{background:rgba(14,143,120,.12);color:var(--brand)}
-.tb-blocked{background:rgba(193,120,24,.14);color:var(--warn);cursor:help}
-.mfav{display:inline-block;padding:2px 6px;border-radius:2px;background:var(--brand-soft);color:var(--brand);font-weight:700}
-.rh{background:rgba(11,143,77,.08)}
+tbody td:first-child{text-align:left;color:var(--tx);font-weight:700}
+tbody tr:nth-child(even) td{background:#fbfdfc}
+.rh td{background:rgba(15,138,71,.05)}
 .tot{
-  margin-top:10px;
-  padding-top:10px;
-  border-top:1px dashed var(--line);
+  margin-top:9px;
+  border-top:1px dashed #c6d4cd;
+  padding-top:9px;
   display:flex;
-  gap:16px;
   flex-wrap:wrap;
-  font-family:'IBM Plex Mono',monospace;
+  gap:14px;
+  font-family:'JetBrains Mono',monospace;
   font-size:11px;
 }
-.hist{
-  display:flex;
-  align-items:flex-end;
-  gap:5px;
-  height:118px;
-  margin:8px 0 4px;
-}
+.tb{display:inline-block;padding:2px 7px;border-radius:999px;font-size:8px;font-weight:700;letter-spacing:.4px}
+.tb-b{background:rgba(15,138,71,.16);color:var(--gn)}
+.tb-s{background:rgba(196,64,59,.16);color:var(--rd)}
+.tb-l{background:rgba(11,127,106,.16);color:var(--brand)}
+.tb-blocked{background:rgba(184,106,22,.16);color:var(--am);cursor:help}
+.mfav{display:inline-block;padding:2px 7px;border-radius:999px;background:rgba(11,127,106,.16);color:var(--brand);font-weight:700}
+.pos-w td{box-shadow:inset 4px 0 0 rgba(47,111,179,.4)}
+.pos-l{opacity:.45}
+.split-panels{display:grid;grid-template-columns:1fr;gap:10px}
+.hist{display:flex;align-items:flex-end;gap:5px;height:126px;margin:8px 0}
 .hc{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
 .hbs{display:flex;gap:3px;align-items:flex-end;width:100%;justify-content:center;flex:1}
-.hb1,.hb2,.hb3{width:28%;border-radius:1px;transition:height .3s ease}
-.hp,.hl{font-family:'IBM Plex Mono',monospace;color:var(--muted2)}
+.hb1,.hb2,.hb3{width:28%;border-radius:2px;transition:height .3s ease}
+.hp,.hl{font-family:'JetBrains Mono',monospace;color:var(--muted)}
 .hp{font-size:9px;margin-bottom:2px}
 .hl{font-size:10px;margin-top:4px}
-.split-panels{
-  display:grid;
-  grid-template-columns:1.7fr 1fr;
-  gap:12px;
-  align-items:start;
-}
 #log{
   max-height:330px;
-  overflow-y:auto;
+  overflow:auto;
+  border:1px solid #d6e3dd;
+  border-radius:12px;
   padding:10px;
-  border:1px solid #30463f;
-  background:#f6faf8;
-  color:#27413a;
-  font-family:'IBM Plex Mono',monospace;
+  background:#f5faf8;
+  font-family:'JetBrains Mono',monospace;
   font-size:10px;
-  line-height:1.65;
+  line-height:1.62;
 }
-.lo{color:#36544c}
-.le{color:#9a2f2f}
-.lw{color:#9b5f10}
-.api-grid{
-  display:grid;
-  grid-template-columns:repeat(3,minmax(180px,1fr));
-  gap:10px;
-}
-.cfg-grid-min{
-  display:grid;
-  grid-template-columns:repeat(3,minmax(150px,1fr));
-  gap:10px;
-}
+.lo{color:#325248}
+.le{color:#9c332f}
+.lw{color:#9d6315}
+.config-shell{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.api-grid{display:grid;grid-template-columns:repeat(3,minmax(150px,1fr));gap:10px}
+.cfg-grid-min{display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:10px}
 .field{display:flex;flex-direction:column;gap:5px}
 .field label{
-  font-family:'IBM Plex Mono',monospace;
+  font-family:'JetBrains Mono',monospace;
+  font-size:9px;
   text-transform:uppercase;
   letter-spacing:1px;
-  font-size:9px;
-  color:var(--muted2);
-}
-.field input,.cfg-input{
-  width:100%;
-  border:1px solid var(--line);
-  background:var(--canvas);
-  color:var(--ink);
-  font-family:'IBM Plex Mono',monospace;
-  font-size:11px;
-  padding:8px 9px;
-  border-radius:2px;
-}
-.field input:focus,.cfg-input:focus{
-  outline:none;
-  border-color:#2f6f61;
-  box-shadow:0 0 0 3px rgba(14,143,120,.15);
-}
-.btn{
-  border:1px solid var(--line);
-  background:#f3f7f5;
-  color:var(--ink);
-  padding:8px 12px;
-  border-radius:2px;
-  cursor:pointer;
-  font-family:'IBM Plex Mono',monospace;
-  font-size:10px;
-  font-weight:600;
-}
-.btn:hover{border-color:#7d948d}
-.btn-primary{
-  border-color:#2f6f61;
-  background:#e5f3ef;
-  color:#1d5d4f;
-}
-.ctl{display:flex;align-items:center;gap:8px}
-.sw{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  font-family:'IBM Plex Mono',monospace;
-  font-size:10px;
   color:var(--muted);
 }
+.field input,.cfg-input{
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:var(--surface-soft);
+  color:var(--tx);
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;
+  padding:9px 10px;
+}
+.field input:focus,.cfg-input:focus{outline:none;border-color:#67a191;box-shadow:0 0 0 3px rgba(11,127,106,.13)}
+.btn{
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:#f5f8f7;
+  color:var(--tx);
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;
+  font-weight:700;
+  padding:8px 12px;
+  cursor:pointer;
+}
+.btn:hover{border-color:#8fa69d}
+.btn-primary{border-color:#78a999;background:#e8f4ef;color:#1f6454}
+.ctl{display:flex;align-items:center;gap:8px}
+.sw{display:inline-flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dm)}
 .sw input{display:none}
-.sw span{
-  position:relative;
-  width:36px;
-  height:20px;
-  background:#c8d1cb;
-  border:1px solid #95a9a2;
-}
-.sw span::after{
-  content:'';
-  position:absolute;
-  top:1px;
-  left:1px;
-  width:16px;
-  height:16px;
-  background:#fff;
-  border:1px solid #95a9a2;
-  transition:.2s;
-}
-.sw input:checked + span{background:#7fd2c0}
-.sw input:checked + span::after{left:17px}
-.cfg-grid{display:flex;flex-direction:column;gap:0}
-.cfg-row{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  padding:8px 0;
-  border-bottom:1px solid var(--line-soft);
-  gap:12px;
-}
-.cfg-row:last-child,.cfg-city:last-child{border-bottom:none}
-.cfg-l{display:flex;flex-direction:column;gap:2px;flex:1}
-.cfg-name{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:var(--ink)}
-.cfg-desc{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--muted2);line-height:1.3}
-.cfg-val{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500}
-.cfg-city{padding:10px 0;border-bottom:1px solid var(--line-soft)}
-.cfg-city-hdr{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.cfg-city-flag{font-size:14px}
-.cfg-city-name{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600}
-.cfg-city-meta{font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--muted2)}
-.cfg-city-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 16px;margin-left:22px}
-.cfg-city-item{display:flex;justify-content:space-between;align-items:center;font-family:'IBM Plex Mono',monospace;font-size:9px;padding:2px 0}
-.cfg-city-item span:first-child{color:var(--muted)}
-.cfg-city-item span:last-child{color:var(--ink);font-weight:500}
+.sw span{position:relative;width:38px;height:20px;background:#cdd9d3;border:1px solid #97aaa1;border-radius:999px}
+.sw span::after{content:'';position:absolute;top:1px;left:1px;width:16px;height:16px;border-radius:50%;background:#fff;border:1px solid #96aaa0;transition:.2s}
+.sw input:checked + span{background:#8cd7c6}
+.sw input:checked + span::after{left:19px}
 .ft{
-  margin-top:12px;
-  font-family:'IBM Plex Mono',monospace;
+  font-family:'JetBrains Mono',monospace;
   font-size:9px;
-  color:var(--muted2);
-  line-height:1.6;
+  color:var(--muted);
+  padding:2px 3px;
 }
-.ft a{color:#1f6c5d;text-decoration:underline;text-underline-offset:3px}
-.pnl-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:2px;margin-bottom:10px;font-family:'IBM Plex Mono',monospace;font-size:10px}
-.pnl-wait{background:#f3f7f5;border:1px solid var(--line);color:var(--muted)}
-.pnl-live{background:#f3f7f5;border:1px solid var(--line);color:var(--ink)}
-.pnl-win{background:rgba(11,143,77,.1);border:1px solid rgba(11,143,77,.3);color:var(--good)}
-.pnl-lose{background:rgba(203,58,58,.1);border:1px solid rgba(203,58,58,.3);color:var(--danger)}
-.pnl-dot{width:6px;height:6px;background:currentColor}
-.pnl-big{text-align:center;padding:12px;font-family:'IBM Plex Mono',monospace;margin-bottom:6px}
-.pnl-big-label{font-size:8px;text-transform:uppercase;letter-spacing:2px;color:var(--muted2);margin-bottom:3px}
-.pnl-big-val{font-size:22px;font-weight:600}
-.pnl-big-sub{font-size:8px;color:var(--muted2);margin-top:3px}
-.pos-w{background:rgba(11,143,77,.08)}
-.pos-l{opacity:.45}
-@media(max-width:1240px){
-  .split-panels{grid-template-columns:1fr}
+.ft a{color:#236a5b;text-decoration:underline;text-underline-offset:3px}
+@media(max-width:1180px){
+  .workspace{grid-template-columns:1fr}
+  .config-shell{grid-template-columns:1fr}
 }
-@media(max-width:980px){
-  body{grid-template-columns:1fr}
-  .sidebar{
-    position:relative;
-    min-height:auto;
-    height:auto;
-    border-right:none;
-    border-bottom:2px solid #273b35;
-  }
-  .stats{grid-template-columns:repeat(2,minmax(140px,1fr))}
+@media(max-width:900px){
+  body{padding:12px}
+  .top-band{grid-template-columns:1fr;gap:10px}
+  .status-side{align-items:flex-start}
+  .status-list{align-items:flex-start}
+  #hdrTitle{font-size:26px}
+  .stats{grid-template-columns:1fr}
   .api-grid,.cfg-grid-min{grid-template-columns:1fr}
-  .main{padding:14px}
-  .hdr h2{font-size:24px}
 }
 </style>
 </head>
 <body>
 
-<div class="sidebar">
-<div class="sb-title">Markets</div>
-<div id="cityNav"></div>
-</div>
-
-<div class="main" id="tradingPage">
-<div class="hdr">
-<div><h1>Weather Trader</h1><h2 id="hdrTitle">Loading... <span></span></h2></div>
-<div class="hr">
-  <div class="ctl" style="justify-content:flex-end;margin-bottom:4px">
-    <label class="sw" title="Pause/resume live trading bot">
-      <input id="botSwitch" type="checkbox" onchange="toggleBotPause()">
-      <span></span>
-      <em id="botSwitchLabel" style="font-style:normal">Bot ON</em>
-    </label>
-  </div>
-  <div class="lb" id="badge">Starting...</div><br><span id="stationInfo">—</span><br><span id="ut">—</span>
-</div>
-</div>
-
-<div class="chips">
-  <div class="chip chip-live" id="chipBankroll">Bankroll: <b>—</b></div>
-  <div class="chip" id="chipExposure">Exposure: <b>—</b></div>
-  <div class="chip" id="chipActive">Active positions: <b>0</b></div>
-  <div class="chip" id="chipMode">Mode: <b>—</b></div>
-  <div class="chip" id="chipApi">API: <b>offline</b></div>
-</div>
-<div class="warn note-active" id="activePosNotice" style="display:none"></div>
-
-<div class="dtabs" id="dateTabs"></div>
-
-<div class="warn" id="biasWarn"></div>
-
-<div class="stats">
-<div class="st"><div class="st-l">Forecast Source</div><div class="st-v" id="curT">—</div><div class="st-s" id="curTs">—</div></div>
-<div class="st"><div class="st-l">Tomorrow Max</div><div class="st-v" id="dH">—</div><div class="st-s" id="dHs">—</div></div>
-<div class="st"><div class="st-l">Predicted Bracket</div><div class="st-v" id="ensMean">—</div><div class="st-s" id="ensSrc">loading...</div></div>
-<div class="st"><div class="st-l">Execution</div><div class="st-v">SIM</div><div class="st-s">forward test only</div></div>
-</div>
-
-<div id="entryTiming" style="display:none;padding:8px 14px;border-radius:6px;margin-bottom:8px;font-size:11px;border:1px solid var(--dm)"></div>
-<div id="stopLossWarn" style="display:none;padding:10px 14px;border-radius:6px;margin-bottom:8px;font-size:12px;font-weight:700;border:1px solid var(--rd);background:rgba(220,38,38,.04);color:var(--rd)"></div>
-
-<div class="sb-sig" id="sigB">
-<div><div class="sg-t" id="sigT" style="color:var(--dm)">Connecting...</div><div class="sg-n" id="sigN">—</div></div>
-<div class="sg-d" id="sigD"></div>
-<div class="sg-reasons" id="blockedSummary"></div>
-</div>
-
-<div class="pn">
-<div class="pt">Bracket Analysis — Bias-Corrected True Edge After All Costs</div>
-<table><thead><tr>
-<th style="text-align:left">Bracket</th><th style="text-align:center">Signal</th>
-<th>Raw %</th><th>Corrected %</th><th>Market %</th><th>Bid</th><th>Ask</th><th>Spread</th>
-<th>Raw Edge</th><th style="color:var(--gn)">True Edge</th><th>Models</th><th>Bet</th><th>E[P]</th>
-</tr></thead><tbody id="tbl"></tbody></table>
-<div class="tot" id="totals"></div>
-</div>
-
-<div class="split-panels">
-<div class="pn" id="histPanel" style="display:none">
-<div class="pt">Distribution: Raw → Corrected → Market</div>
-<div class="hist" id="hist"></div>
-<div style="display:flex;gap:14px;margin-top:6px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm)"><span style="color:var(--h1)">◼ Raw</span><span style="color:var(--h2)">◼ Corrected</span><span style="opacity:.35">◼ Market</span></div>
-</div>
-
-<div class="pn" id="logPanel"><div class="pt">Live Bot Log</div><div id="log"></div></div>
-</div>
-
-<div class="pn">
-<div class="pt">Live Control</div>
-<div class="api-grid">
-  <div class="field">
-    <label>API Base URL</label>
-    <input id="apiBase" placeholder="http://178.62.253.211:8090">
-  </div>
-  <div class="field">
-    <label>API Token</label>
-    <input id="apiToken" type="password" placeholder="x-api-key">
-  </div>
-  <div class="field">
-    <label>Actions</label>
-    <div style="display:flex;gap:6px">
-      <button class="btn" onclick="saveApiSettings()">Save</button>
-      <button class="btn btn-primary" onclick="refreshSummary(true)">Connect</button>
+<div class="app-shell" id="tradingPage">
+  <header class="top-band panel">
+    <div>
+      <p class="eyebrow">Weather Trader Dashboard</p>
+      <h1 id="hdrTitle">Loading... <span></span></h1>
     </div>
+    <div class="status-side">
+      <div class="ctl">
+        <label class="sw" title="Pause/resume live trading bot">
+          <input id="botSwitch" type="checkbox" onchange="toggleBotPause()">
+          <span></span>
+          <em id="botSwitchLabel" style="font-style:normal">Bot ON</em>
+        </label>
+      </div>
+      <div class="status-list">
+        <div id="badge">Starting...</div>
+        <span id="stationInfo">—</span>
+        <span id="ut">—</span>
+      </div>
+    </div>
+  </header>
+
+  <section class="panel city-panel">
+    <div class="pt">City Markets</div>
+    <div id="cityNav"></div>
+  </section>
+
+  <section class="chips">
+    <div class="chip chip-live" id="chipBankroll">Bankroll: <b>—</b></div>
+    <div class="chip" id="chipExposure">Exposure: <b>—</b></div>
+    <div class="chip" id="chipActive">Active positions: <b>0</b></div>
+    <div class="chip" id="chipMode">Mode: <b>—</b></div>
+    <div class="chip" id="chipApi">API: <b>offline</b></div>
+  </section>
+
+  <div class="warn note-active" id="activePosNotice" style="display:none"></div>
+
+  <div class="workspace">
+    <main class="panel panel-main">
+      <div class="warn" id="biasWarn"></div>
+
+      <div class="dtabs" id="dateTabs"></div>
+
+      <div id="entryTiming" style="display:none;padding:8px 14px;border-radius:12px;margin-bottom:2px;font-size:11px;border:1px solid var(--dm)"></div>
+      <div id="stopLossWarn" style="display:none;padding:10px 14px;border-radius:12px;margin-bottom:2px;font-size:12px;font-weight:700;border:1px solid var(--rd);background:rgba(220,38,38,.04);color:var(--rd)"></div>
+
+      <div class="sb-sig" id="sigB">
+        <div>
+          <div class="sg-t" id="sigT" style="color:var(--dm)">Connecting...</div>
+          <div class="sg-n" id="sigN">—</div>
+        </div>
+        <div class="sg-d" id="sigD"></div>
+        <div class="sg-reasons" id="blockedSummary"></div>
+      </div>
+
+      <div class="pn">
+        <div class="pt">Bracket Analysis</div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align:left">Bracket</th>
+                <th style="text-align:center">Signal</th>
+                <th>Raw %</th>
+                <th>Corrected %</th>
+                <th>Market %</th>
+                <th>Bid</th>
+                <th>Ask</th>
+                <th>Spread</th>
+                <th>Raw Edge</th>
+                <th style="color:var(--gn)">True Edge</th>
+                <th>Models</th>
+                <th>Bet</th>
+                <th>E[P]</th>
+              </tr>
+            </thead>
+            <tbody id="tbl"></tbody>
+          </table>
+        </div>
+        <div class="tot" id="totals"></div>
+      </div>
+    </main>
+
+    <aside class="side-stack">
+      <section class="panel" style="padding:12px">
+        <div class="stats">
+          <div class="st"><div class="st-l">Forecast Source</div><div class="st-v" id="curT">—</div><div class="st-s" id="curTs">—</div></div>
+          <div class="st"><div class="st-l">Tomorrow Max</div><div class="st-v" id="dH">—</div><div class="st-s" id="dHs">—</div></div>
+          <div class="st"><div class="st-l">Predicted Bracket</div><div class="st-v" id="ensMean">—</div><div class="st-s" id="ensSrc">loading...</div></div>
+          <div class="st"><div class="st-l">Execution</div><div class="st-v">SIM</div><div class="st-s">forward test only</div></div>
+        </div>
+      </section>
+
+      <div class="split-panels">
+        <div class="pn" id="histPanel" style="display:none">
+          <div class="pt">Distribution: Raw → Corrected → Market</div>
+          <div class="hist" id="hist"></div>
+          <div style="display:flex;gap:14px;margin-top:6px;font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--dm)">
+            <span style="color:var(--h1)">◼ Raw</span>
+            <span style="color:var(--h2)">◼ Corrected</span>
+            <span style="opacity:.35">◼ Market</span>
+          </div>
+        </div>
+
+        <div class="pn" id="logPanel">
+          <div class="pt">Live Bot Log</div>
+          <div id="log"></div>
+        </div>
+      </div>
+    </aside>
   </div>
-</div>
-<div id="apiMsg" style="margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm)"></div>
-</div>
 
-<div class="pn">
-<div class="pt">Risk Parameters (Live Bot)</div>
-<div class="cfg-grid-min">
-  <div class="field"><label>Max Bet Ratio</label><input id="cfgMaxBetRatio" type="number" step="0.01" min="0" max="1"></div>
-  <div class="field"><label>Max Exposure Ratio</label><input id="cfgMaxExposureRatio" type="number" step="0.01" min="0" max="1"></div>
-  <div class="field"><label>Daily Loss Ratio</label><input id="cfgDailyLossRatio" type="number" step="0.01" min="0" max="1"></div>
-  <div class="field"><label>Min Ask Depth</label><input id="cfgMinAskDepth" type="number" step="1" min="0"></div>
-  <div class="field"><label>Max Ask Price</label><input id="cfgMaxAskPrice" type="number" step="0.01" min="0" max="1"></div>
-  <div class="field"><label>Order Timeout (sec)</label><input id="cfgOrderTimeout" type="number" step="1" min="30"></div>
-  <div class="field"><label>City Min Edge</label><input id="cfgCityMinEdge" type="number" step="0.01" min="0" max="0.5"></div>
-  <div class="field"><label>City Min Models</label><input id="cfgCityMinModels" type="number" step="1" min="1"></div>
-  <div class="field"><label>City Min Families</label><input id="cfgCityMinFamilies" type="number" step="1" min="1"></div>
-</div>
-<div style="display:flex;gap:8px;align-items:center;margin-top:10px">
-  <button class="btn btn-primary" onclick="saveRuntimeConfig()">Save Live Config</button>
-  <span id="cfgMsg" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dm)"></span>
-</div>
-</div>
+  <section class="config-shell">
+    <div class="pn">
+      <div class="pt">Live Control</div>
+      <div class="api-grid">
+        <div class="field">
+          <label>API Base URL</label>
+          <input id="apiBase" placeholder="http://178.62.253.211:8090">
+        </div>
+        <div class="field">
+          <label>API Token</label>
+          <input id="apiToken" type="password" placeholder="x-api-key">
+        </div>
+        <div class="field">
+          <label>Actions</label>
+          <div style="display:flex;gap:6px">
+            <button class="btn" onclick="saveApiSettings()">Save</button>
+            <button class="btn btn-primary" onclick="refreshSummary(true)">Connect</button>
+          </div>
+        </div>
+      </div>
+      <div id="apiMsg" style="margin-top:8px;font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--dm)"></div>
+    </div>
 
-<div class="ft" id="footer">—</div>
-</div>
+    <div class="pn">
+      <div class="pt">Risk Parameters (Live Bot)</div>
+      <div class="cfg-grid-min">
+        <div class="field"><label>Max Bet Ratio</label><input id="cfgMaxBetRatio" type="number" step="0.01" min="0" max="1"></div>
+        <div class="field"><label>Max Exposure Ratio</label><input id="cfgMaxExposureRatio" type="number" step="0.01" min="0" max="1"></div>
+        <div class="field"><label>Daily Loss Ratio</label><input id="cfgDailyLossRatio" type="number" step="0.01" min="0" max="1"></div>
+        <div class="field"><label>Min Ask Depth</label><input id="cfgMinAskDepth" type="number" step="1" min="0"></div>
+        <div class="field"><label>Max Ask Price</label><input id="cfgMaxAskPrice" type="number" step="0.01" min="0" max="1"></div>
+        <div class="field"><label>Order Timeout (sec)</label><input id="cfgOrderTimeout" type="number" step="1" min="30"></div>
+        <div class="field"><label>City Min Edge</label><input id="cfgCityMinEdge" type="number" step="0.01" min="0" max="0.5"></div>
+        <div class="field"><label>City Min Models</label><input id="cfgCityMinModels" type="number" step="1" min="1"></div>
+        <div class="field"><label>City Min Families</label><input id="cfgCityMinFamilies" type="number" step="1" min="1"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <button class="btn btn-primary" onclick="saveRuntimeConfig()">Save Live Config</button>
+        <span id="cfgMsg" style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--dm)"></span>
+      </div>
+    </div>
+  </section>
 
+  <div class="ft" id="footer">—</div>
+</div>
 <script>
 // ══════════════════════════════════════════════════════════
 // CITY CONFIGURATIONS

@@ -230,6 +230,10 @@ async def fetch_tomorrow_daily_max(city: dict, date_str: str) -> dict:
             }
         )
 
+    if probability_source == "probabilistic_fields" and not has_prob_fields:
+        # Endpoint accepted field list but returned only point values.
+        probability_source = "temperature_only"
+
     if not points:
         raise ValueError(f"No Tomorrow.io forecast points for {city['name']} {date_str}")
 

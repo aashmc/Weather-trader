@@ -196,6 +196,14 @@ async def record_forward_resolution(
     lead_bucket = (snap.get("lead_bucket") if isinstance(snap, dict) else "") or "near"
     probability_source = (snap.get("probability_source") if isinstance(snap, dict) else "") or ""
 
+    # If we never captured any forward snapshot for this market/date,
+    # don't create a fake zero-quality record.
+    has_snapshot = bool(bracket_probs) or (forecast_max is not None)
+    if not has_snapshot:
+        state.setdefault("resolved_keys", {})[key] = f"nosnapshot:{winner}"
+        _save_state(state)
+        return {"recorded": False, "reason": "no_snapshot", "record": None}
+
     winner_prob, brier, top_pick, top_pick_prob = _score_probs(bracket_probs, winner)
 
     actual_temp = None
@@ -330,8 +338,7 @@ def build_daily_report_message(now_utc: datetime | None = None) -> dict | None:
     rows = []
     for city_rows in (state.get("resolved_metrics") or {}).values():
         for rec in city_rows or []:
-            ts = str(rec.get("timestamp", ""))
-            if ts.startswith(report_day):
+            if str(rec.get("date", "")) == report_day:
                 rows.append(rec)
     rows.sort(key=lambda x: x.get("timestamp", ""))
 

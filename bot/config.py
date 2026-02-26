@@ -9,7 +9,13 @@ from copy import deepcopy
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Always load repo-root .env (../.env from bot/config.py) and allow it to
+# override empty/misconfigured service env vars.
+_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+if _ENV_PATH.exists():
+    load_dotenv(dotenv_path=_ENV_PATH, override=True)
+else:
+    load_dotenv(override=True)
 
 # ══════════════════════════════════════════════════════
 # SECRETS (from .env)

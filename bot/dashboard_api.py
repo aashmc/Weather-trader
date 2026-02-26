@@ -25,6 +25,10 @@ from metar import fetch_metar
 from risk import get_portfolio_summary, get_state
 from strategy import condition_probs_on_observed_high
 from tomorrow import fetch_tomorrow_daily_max
+from tomorrow_quality import (
+    get_lead_bucket as get_forward_lead_bucket,
+    apply_error_calibration as apply_forward_error_calibration,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -287,8 +291,27 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
             except (TypeError, ValueError):
                 continue
 
+        lead_bucket, _lead_hours = get_forward_lead_bucket(city["tz"], date_str)
+        calibrated_dist: dict[int, float] = {}
+        calibration_meta = {
+            "used": False,
+            "reason": "empty_distribution",
+            "samples": 0,
+            "mean_error": 0.0,
+            "sd_error": 0.0,
+            "bucket": lead_bucket,
+        }
         if dist_market:
-            raw_probs = map_to_brackets(dist_market, brackets)
+            calibrated_dist, calibration_meta = apply_forward_error_calibration(
+                city_name=city["name"],
+                lead_bucket=lead_bucket,
+                dist_market=dist_market,
+            )
+            if not calibrated_dist:
+                calibrated_dist = dist_market
+
+        if dist_market:
+            raw_probs = map_to_brackets(calibrated_dist, brackets)
             s = sum(raw_probs.values())
             if s > 0:
                 raw_probs = {k: v / s for k, v in raw_probs.items()}
@@ -349,7 +372,8 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
                 "max_temp_c": forecast.get("max_temp_c"),
                 "max_time_utc": forecast.get("max_time_utc", ""),
                 "max_time_local": forecast.get("max_time_local", ""),
-                "max_dist_market": dist_market,
+                "max_dist_market": calibrated_dist or dist_market,
+                "calibration": calibration_meta,
                 "predicted_bracket": predicted,
                 "favorite_bracket": favorite,
                 "simulated_trade": {

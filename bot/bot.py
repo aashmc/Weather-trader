@@ -27,6 +27,7 @@ from market import (
     fetch_market, fetch_all_books, place_limit_order,
     cancel_order, check_order_status,
     fetch_wallet_balance,
+    check_resolution as market_check_resolution,
     temp_to_bracket,
     MarketUnavailableError,
 )
@@ -56,6 +57,14 @@ from logger import log_cycle, log_resolution, log_fill_update
 from late_guard import get_city_cutoff, build_timing_context
 from tomorrow import fetch_tomorrow_daily_max
 from logger import log_forward_cycle
+from tomorrow_quality import (
+    get_lead_bucket as get_forward_lead_bucket,
+    apply_error_calibration as apply_forward_error_calibration,
+    record_forward_snapshot,
+    record_forward_resolution,
+    build_daily_report_message,
+    mark_daily_report_sent,
+)
 
 # ══════════════════════════════════════════════════════
 # CONTROL FILE — persists bot state across restarts
@@ -634,6 +643,65 @@ def get_market_dates() -> list[str]:
     return dates
 
 
+async def check_forward_resolutions():
+    """
+    Resolve recently-finished markets in forward mode so we can learn
+    forecast error and selection quality continuously.
+    """
+    lookback = max(1, int(config.FORWARD_RESOLUTION_LOOKBACK_DAYS))
+    now_utc = datetime.now(timezone.utc)
+
+    for city in CITIES.values():
+        tz = ZoneInfo(city["tz"])
+        local_today = now_utc.astimezone(tz).date()
+        for i in range(1, lookback + 1):
+            date_str = (local_today - timedelta(days=i)).isoformat()
+            try:
+                res = await market_check_resolution(city, date_str)
+                if not (res.get("resolved") and res.get("winner")):
+                    continue
+                out = await record_forward_resolution(
+                    city_cfg=city,
+                    date_str=date_str,
+                    winner=res["winner"],
+                )
+                if out.get("recorded"):
+                    rec = out.get("record") or {}
+                    log.info(
+                        "Forward quality update %s %s: hit=%s winner_p=%.3f err=%s",
+                        city["name"],
+                        date_str,
+                        "Y" if rec.get("top_pick_hit") else "N",
+                        float(rec.get("winner_prob", 0.0)),
+                        "n/a"
+                        if rec.get("error") is None
+                        else f"{float(rec.get('error')):+.2f}",
+                    )
+            except Exception as exc:
+                log.warning(
+                    "Forward resolution update failed for %s %s: %s",
+                    city["name"],
+                    date_str,
+                    exc,
+                )
+
+
+async def maybe_send_forward_daily_report():
+    payload = build_daily_report_message()
+    if not payload:
+        return
+    try:
+        await send_telegram(payload["message"])
+        mark_daily_report_sent()
+        log.info(
+            "Forward daily report sent for %s (%s rows)",
+            payload.get("report_day"),
+            payload.get("count", 0),
+        )
+    except Exception as exc:
+        log.warning("Forward daily report send failed: %s", exc)
+
+
 async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict:
     """
     Tomorrow.io forward-test processing:
@@ -677,6 +745,26 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
         if market["resolved"]:
             note = f"Already resolved → {market['winner']}"
             log.info(f"{city_name} {date_str}: {note}")
+            try:
+                q = await record_forward_resolution(
+                    city_cfg=city,
+                    date_str=date_str,
+                    winner=market["winner"],
+                )
+                if q.get("recorded"):
+                    rec = q.get("record") or {}
+                    log.info(
+                        "Forward quality update %s %s: hit=%s winner_p=%.3f err=%s",
+                        city_name,
+                        date_str,
+                        "Y" if rec.get("top_pick_hit") else "N",
+                        float(rec.get("winner_prob", 0.0)),
+                        "n/a"
+                        if rec.get("error") is None
+                        else f"{float(rec.get('error')):+.2f}",
+                    )
+            except Exception as qerr:
+                log.warning("Forward quality update failed for %s %s: %s", city_name, date_str, qerr)
             await log_forward_cycle(
                 city=city_name,
                 date_str=date_str,
@@ -704,8 +792,18 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
         forecast = await fetch_tomorrow_daily_max(city, date_str)
         books = await fetch_all_books(token_ids)
 
+        lead_bucket, _lead_hours = get_forward_lead_bucket(city["tz"], date_str)
         predicted = None
         bracket_probs = {}
+        calibration_meta = {
+            "used": False,
+            "reason": "no_distribution",
+            "samples": 0,
+            "mean_error": 0.0,
+            "sd_error": 0.0,
+            "bucket": lead_bucket,
+        }
+        dist_for_snapshot = {}
         dist_market_raw = forecast.get("max_dist_market") or {}
         if dist_market_raw:
             dist_market = {}
@@ -715,12 +813,29 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
                 except (TypeError, ValueError):
                     continue
             if dist_market:
-                bracket_probs = map_to_brackets(dist_market, brackets)
+                calibrated_dist, calibration_meta = apply_forward_error_calibration(
+                    city_name=city_name,
+                    lead_bucket=lead_bucket,
+                    dist_market=dist_market,
+                )
+                dist_for_snapshot = calibrated_dist or dist_market
+                bracket_probs = map_to_brackets(dist_for_snapshot, brackets)
                 s = sum(bracket_probs.values())
                 if s > 0:
                     bracket_probs = {k: v / s for k, v in bracket_probs.items()}
                 if bracket_probs:
                     predicted = max(bracket_probs, key=bracket_probs.get)
+
+        record_forward_snapshot(
+            city_name=city_name,
+            date_str=date_str,
+            lead_bucket=lead_bucket,
+            forecast_max_market=float(forecast["max_temp_market"]),
+            dist_market=dist_for_snapshot,
+            bracket_probs=bracket_probs,
+            probability_source=forecast.get("probability_source", "deterministic"),
+            probabilistic=bool(forecast.get("probabilistic", False)),
+        )
 
         sim = _build_forward_trade_decision(
             city_name=city_name,
@@ -749,6 +864,7 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
             float(sim.get("spread") or 0.0),
         )
 
+        forecast["calibration"] = calibration_meta
         await log_forward_cycle(
             city=city_name,
             date_str=date_str,
@@ -1429,6 +1545,9 @@ async def run_cycle():
                 active_positions=portfolio["active_positions"],
                 daily_pnl=get_daily_pnl(),
             )
+    else:
+        await check_forward_resolutions()
+        await maybe_send_forward_daily_report()
 
     total_trades = sum(r.get("trades", 0) for r in city_summaries)
     total_signals = sum(r.get("signals", 0) for r in city_summaries)

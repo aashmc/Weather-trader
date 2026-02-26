@@ -88,6 +88,16 @@ FORWARD_TEST_SIM_SIZE = max(1, int(os.getenv("FORWARD_TEST_SIM_SIZE", "1")))
 FORWARD_TEST_REENTER_ON_BRACKET_CHANGE = os.getenv(
     "FORWARD_TEST_REENTER_ON_BRACKET_CHANGE", "true"
 ).strip().lower() in ("1", "true", "yes", "on")
+FORWARD_RESOLUTION_LOOKBACK_DAYS = max(
+    1, int(os.getenv("FORWARD_RESOLUTION_LOOKBACK_DAYS", "4"))
+)
+FORWARD_ERROR_WINDOW = max(10, int(os.getenv("FORWARD_ERROR_WINDOW", "240")))
+FORWARD_ERROR_MIN_SAMPLES = max(5, int(os.getenv("FORWARD_ERROR_MIN_SAMPLES", "20")))
+FORWARD_ERROR_MAX_SAMPLES_FOR_CONVOLUTION = max(
+    10, int(os.getenv("FORWARD_ERROR_MAX_SAMPLES_FOR_CONVOLUTION", "120"))
+)
+FORWARD_DAILY_REPORT_UTC_HOUR = max(0, min(23, int(os.getenv("FORWARD_DAILY_REPORT_UTC_HOUR", "7"))))
+FORWARD_DAILY_REPORT_UTC_MINUTE = max(0, min(59, int(os.getenv("FORWARD_DAILY_REPORT_UTC_MINUTE", "10"))))
 
 # ══════════════════════════════════════════════════════
 # MARKET MATURITY THRESHOLDS

@@ -1,7 +1,7 @@
 """
 Weather Trader Bot — Main Loop
-Orchestrates 30-minute cycles across all cities.
-Supports DRY RUN mode and Telegram commands for remote control.
+Orchestrates recurring cycles across all cities.
+Supports both legacy v5 and Tomorrow.io forward-test mode.
 """
 
 import asyncio
@@ -27,6 +27,7 @@ from market import (
     fetch_market, fetch_all_books, place_limit_order,
     cancel_order, check_order_status,
     fetch_wallet_balance,
+    temp_to_bracket,
     MarketUnavailableError,
 )
 from strategy import (
@@ -53,6 +54,8 @@ from alerts import (
 )
 from logger import log_cycle, log_resolution, log_fill_update
 from late_guard import get_city_cutoff, build_timing_context
+from tomorrow import fetch_tomorrow_daily_max
+from logger import log_forward_cycle
 
 # ══════════════════════════════════════════════════════
 # CONTROL FILE — persists bot state across restarts
@@ -177,6 +180,95 @@ def upsert_pending(sig: dict) -> tuple[int, bool]:
     pending.append(sig)
     save_pending(pending)
     return sig["pending_id"], True
+
+
+# ══════════════════════════════════════════════════════
+# FORWARD-TEST STATE — simulated re-entry on bracket change
+# ══════════════════════════════════════════════════════
+FORWARD_STATE_FILE = Path("forward_state.json")
+
+
+def _load_forward_state() -> dict:
+    if FORWARD_STATE_FILE.exists():
+        try:
+            data = json.loads(FORWARD_STATE_FILE.read_text())
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def _save_forward_state(state: dict):
+    FORWARD_STATE_FILE.write_text(json.dumps(state, indent=2, default=str))
+
+
+def _favorite_bracket(brackets: list[dict], prices: dict, books: dict) -> str | None:
+    best_label = None
+    best_price = -1.0
+    for b in brackets:
+        label = b.get("label")
+        if not label:
+            continue
+        ask = float((books.get(label) or {}).get("ba", prices.get(label, 0.0)) or 0.0)
+        if ask > best_price:
+            best_price = ask
+            best_label = label
+    return best_label
+
+
+def _build_forward_trade_decision(
+    *,
+    city_name: str,
+    date_str: str,
+    brackets: list[dict],
+    prices: dict,
+    books: dict,
+    forecast_max_market: float,
+) -> dict:
+    predicted = temp_to_bracket(forecast_max_market, brackets)
+    favorite = _favorite_bracket(brackets, prices, books)
+    book = books.get(predicted or "", {})
+    ask = float(book.get("ba", prices.get(predicted or "", 0.0)) or 0.0)
+    bid = float(book.get("bb", 0.0) or 0.0)
+    spread = float(book.get("spread", max(0.0, ask - bid)) or 0.0)
+
+    state = _load_forward_state()
+    key = f"{city_name}:{date_str}"
+    prev = (state.get(key) or {}).get("last_bracket")
+    action = "enter"
+    if prev:
+        if prev == predicted:
+            action = "hold"
+        elif config.FORWARD_TEST_REENTER_ON_BRACKET_CHANGE:
+            action = "reenter_on_change"
+        else:
+            action = "no_reentry"
+
+    state[key] = {
+        "last_bracket": predicted,
+        "previous_bracket": prev,
+        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_forward_state(state)
+
+    contracts = int(config.FORWARD_TEST_SIM_SIZE)
+    notional = round(ask * contracts, 4)
+    return {
+        "predicted_bracket": predicted,
+        "favorite_bracket": favorite,
+        "previous_bracket": prev,
+        "action": action,
+        "bracket_changed": bool(prev and prev != predicted),
+        "bracket": predicted,
+        "ask": ask,
+        "bid": bid,
+        "spread": spread,
+        "contracts": contracts,
+        "notional": notional,
+        "book_bid_depth": float(book.get("bid_depth", 0.0) or 0.0),
+        "book_ask_depth": float(book.get("ask_depth", 0.0) or 0.0),
+    }
 
 
 # ══════════════════════════════════════════════════════
@@ -364,6 +456,12 @@ async def answer_callback(token: str, callback_id: str):
 
 async def execute_pending_signal(sig_id: int):
     """Execute a pending signal by its ID."""
+    if config.STRATEGY_ENGINE == "forward_test_tomorrow":
+        await send_telegram(
+            "ℹ️ Forward-test mode is active. Manual order execution is disabled."
+        )
+        return
+
     pending = load_pending()
     sig = None
     for s in pending:
@@ -520,16 +618,130 @@ async def _maybe_alert_freshness_block(city_name: str, date_str: str, reason: st
 
 def get_market_dates() -> list[str]:
     """
-    Get dates to trade: today, tomorrow, and day after tomorrow.
-    Polymarket weather markets open 2-3 days ahead.
+    Get dates to process starting from today (UTC).
     Uses UTC date as reference.
     """
     now = datetime.now(timezone.utc)
     dates = []
-    for i in range(3):  # today, tomorrow, day after
+    for i in range(config.MARKET_LOOKAHEAD_DAYS):
         d = (now + timedelta(days=i)).strftime("%Y-%m-%d")
         dates.append(d)
     return dates
+
+
+async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict:
+    """
+    Tomorrow.io forward-test processing:
+    - fetch market + books
+    - fetch Tomorrow.io forecast max
+    - simulate a trade decision (no real order)
+    - persist snapshot
+    """
+    city_name = city["name"]
+    result = {
+        "city": city_name,
+        "date": date_str,
+        "signals": 0,
+        "trades": 0,
+        "error": None,
+    }
+
+    try:
+        try:
+            market = await fetch_market(city, date_str)
+        except MarketUnavailableError as me:
+            msg = f"Market not open yet ({me})"
+            log.info(f"{city_name} {date_str}: {msg}")
+            await log_forward_cycle(
+                city=city_name,
+                date_str=date_str,
+                market_slug="",
+                market_active=False,
+                market_resolved=False,
+                market_winner=None,
+                prices={},
+                books_snapshot={},
+                forecast={},
+                simulated_trade={},
+                status="market_unavailable",
+                note=msg,
+            )
+            result["status"] = "market_unavailable"
+            return result
+
+        if market["resolved"]:
+            note = f"Already resolved → {market['winner']}"
+            log.info(f"{city_name} {date_str}: {note}")
+            await log_forward_cycle(
+                city=city_name,
+                date_str=date_str,
+                market_slug=market.get("slug", ""),
+                market_active=bool(market.get("active", False)),
+                market_resolved=True,
+                market_winner=market.get("winner"),
+                prices=market.get("prices", {}),
+                books_snapshot={},
+                forecast={},
+                simulated_trade={},
+                status="resolved",
+                note=note,
+            )
+            result["status"] = f"resolved:{market['winner']}"
+            return result
+
+        brackets = market["brackets"]
+        prices = market["prices"]
+        token_ids = market["token_ids"]
+        if not brackets:
+            result["error"] = "no_brackets"
+            return result
+
+        forecast = await fetch_tomorrow_daily_max(city, date_str)
+        books = await fetch_all_books(token_ids)
+        sim = _build_forward_trade_decision(
+            city_name=city_name,
+            date_str=date_str,
+            brackets=brackets,
+            prices=prices,
+            books=books,
+            forecast_max_market=float(forecast["max_temp_market"]),
+        )
+
+        log.info(
+            "%s %s: Tomorrow max %.1f%s -> %s | action=%s ask=%.3f spread=%.3f",
+            city_name,
+            date_str,
+            float(forecast["max_temp_market"]),
+            "°F" if city["unit"] == "F" else "°C",
+            sim.get("bracket") or "?",
+            sim.get("action", "n/a"),
+            float(sim.get("ask") or 0.0),
+            float(sim.get("spread") or 0.0),
+        )
+
+        await log_forward_cycle(
+            city=city_name,
+            date_str=date_str,
+            market_slug=market.get("slug", ""),
+            market_active=bool(market.get("active", False)),
+            market_resolved=False,
+            market_winner=None,
+            prices=prices,
+            books_snapshot=books,
+            forecast=forecast,
+            simulated_trade=sim,
+            status="ok",
+        )
+
+        result["signals"] = 1 if sim.get("bracket") else 0
+        result["trades"] = 1 if sim.get("action") in ("enter", "reenter_on_change") else 0
+        result["status"] = "ok"
+        return result
+
+    except Exception as e:
+        log.error(f"{city_name} {date_str}: Forward-test error — {e}", exc_info=True)
+        result["error"] = str(e)
+        return result
 
 
 async def process_city(city_key: str, city: dict, date_str: str, live_guard: dict | None = None) -> dict:
@@ -547,6 +759,9 @@ async def process_city(city_key: str, city: dict, date_str: str, live_guard: dic
         "trades": 0,
         "error": None,
     }
+
+    if config.STRATEGY_ENGINE == "forward_test_tomorrow":
+        return await process_city_forward(city_key, city, date_str)
 
     try:
         # 1. Fetch market data (brackets + prices)
@@ -1054,41 +1269,46 @@ async def run_cycle():
     # Poll Telegram commands first
     await poll_telegram_commands()
     config.refresh_runtime_overrides()
+    forward_mode = config.STRATEGY_ENGINE == "forward_test_tomorrow"
+    live_guard = None
 
-    tune_meta = run_weekly_parameter_tune()
-    if tune_meta.get("applied"):
-        # Ensure any override writes are loaded into runtime thresholds.
-        config.refresh_runtime_overrides(force=True)
-        changes = tune_meta.get("changes", {})
-        if changes:
-            parts = []
-            for city_key, item in changes.items():
-                parts.append(
-                    f"{city_key}: edge {item['old_edge']*100:.1f}->{item['new_edge']*100:.1f}pt, "
-                    f"conc {item['old_concentration']*100:.0f}->{item['new_concentration']*100:.0f}%"
+    if not forward_mode:
+        tune_meta = run_weekly_parameter_tune()
+        if tune_meta.get("applied"):
+            # Ensure any override writes are loaded into runtime thresholds.
+            config.refresh_runtime_overrides(force=True)
+            changes = tune_meta.get("changes", {})
+            if changes:
+                parts = []
+                for city_key, item in changes.items():
+                    parts.append(
+                        f"{city_key}: edge {item['old_edge']*100:.1f}->{item['new_edge']*100:.1f}pt, "
+                        f"conc {item['old_concentration']*100:.0f}->{item['new_concentration']*100:.0f}%"
+                    )
+                log.info(f"Weekly auto-tune applied ({tune_meta.get('week')}): {' | '.join(parts)}")
+                await send_telegram(
+                    f"🧠 <b>WEEKLY AUTO-TUNE APPLIED ({tune_meta.get('week')})</b>\n"
+                    + "\n".join(f"  • {p}" for p in parts)
                 )
-            log.info(f"Weekly auto-tune applied ({tune_meta.get('week')}): {' | '.join(parts)}")
-            await send_telegram(
-                f"🧠 <b>WEEKLY AUTO-TUNE APPLIED ({tune_meta.get('week')})</b>\n"
-                + "\n".join(f"  • {p}" for p in parts)
-            )
 
-    live_guard = evaluate_live_guardrails()
-    if should_alert_guardrails(live_guard):
-        await send_telegram(format_guardrail_alert(live_guard))
-    if live_guard.get("level", 0) > 0:
-        log.warning(
-            "Live guardrail active: level=%s edge_bump=%.1fpt size_mult=%.2fx",
-            live_guard.get("level"),
-            live_guard.get("edge_bump", 0.0) * 100,
-            live_guard.get("size_mult", 1.0),
-        )
+        live_guard = evaluate_live_guardrails()
+        if should_alert_guardrails(live_guard):
+            await send_telegram(format_guardrail_alert(live_guard))
+        if live_guard.get("level", 0) > 0:
+            log.warning(
+                "Live guardrail active: level=%s edge_bump=%.1fpt size_mult=%.2fx",
+                live_guard.get("level"),
+                live_guard.get("edge_bump", 0.0) * 100,
+                live_guard.get("size_mult", 1.0),
+            )
 
     dry_run = is_dry_run()
     paused = is_paused()
     mode = get_mode()
     mode_map = {"dryrun": "🧪 DRY RUN", "manual": "👆 MANUAL", "auto": "🔴 AUTO"}
     mode_tag = mode_map.get(mode, "🧪 DRY RUN")
+    if forward_mode:
+        mode_tag = "📊 FORWARD TEST"
 
     log.info(f"╔══════════════════════════════════════╗")
     log.info(f"║  CYCLE #{cycle_count}  —  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  ║")
@@ -1100,8 +1320,8 @@ async def run_cycle():
         log.info("Bot is PAUSED — skipping cycle. Send /resume on Telegram.")
         return
 
-    # Check kill switch
-    if is_kill_switch_active():
+    # Check kill switch for live trading mode only.
+    if not forward_mode and is_kill_switch_active():
         log.warning("Kill switch active — skipping trading cycle")
         return
 
@@ -1120,7 +1340,7 @@ async def run_cycle():
         log.warning("Wallet balance is $0 — no trades this cycle")
     else:
         log.warning("Balance fetch failed — skipping trades this cycle (bankroll $0)")
-        if config.BANKROLL <= 0:
+        if not forward_mode and config.BANKROLL <= 0:
             # Don't trade on stale/missing data
             return
 
@@ -1155,37 +1375,44 @@ async def run_cycle():
                 log.error(f"Unhandled error in {city['name']} {date_str}: {e}")
                 await alert_error(f"Cycle error: {city['name']} {date_str} — {e}")
 
-    # Check pending orders from previous cycles (skip in dry run).
-    # Manual mode still places real orders after Telegram approvals,
-    # so those orders must be reconciled too.
-    if mode in ("auto", "manual"):
-        await check_pending_orders()
+    if not forward_mode:
+        # Check pending orders from previous cycles (skip in dry run).
+        # Manual mode still places real orders after Telegram approvals,
+        # so those orders must be reconciled too.
+        if mode in ("auto", "manual"):
+            await check_pending_orders()
 
-    # Check resolutions
-    await check_resolutions()
+        # Check resolutions
+        await check_resolutions()
 
-    # Heartbeat every 6 cycles (~3 hours)
-    if cycle_count % 6 == 0:
-        portfolio = get_portfolio_summary()
-        summaries_str = " | ".join(
-            f"{r['city']}: {'signal' if r.get('signals', 0) > 0 else 'no edge'}"
-            for r in city_summaries
-            if r.get("date") == dates[0]  # today only
-        )
-        await alert_heartbeat(
-            cycle_num=cycle_count,
-            cities_summary=summaries_str,
-            active_positions=portfolio["active_positions"],
-            daily_pnl=get_daily_pnl(),
-        )
+        # Heartbeat every 6 cycles (~3 hours)
+        if cycle_count % 6 == 0:
+            portfolio = get_portfolio_summary()
+            summaries_str = " | ".join(
+                f"{r['city']}: {'signal' if r.get('signals', 0) > 0 else 'no edge'}"
+                for r in city_summaries
+                if r.get("date") == dates[0]  # today only
+            )
+            await alert_heartbeat(
+                cycle_num=cycle_count,
+                cities_summary=summaries_str,
+                active_positions=portfolio["active_positions"],
+                daily_pnl=get_daily_pnl(),
+            )
 
     total_trades = sum(r.get("trades", 0) for r in city_summaries)
     total_signals = sum(r.get("signals", 0) for r in city_summaries)
 
-    log.info(
-        f"Cycle #{cycle_count} complete: "
-        f"{total_signals} signals, {total_trades} {'queued' if mode == 'manual' else 'dry run signals' if mode == 'dryrun' else 'trades placed'}"
-    )
+    if forward_mode:
+        log.info(
+            f"Cycle #{cycle_count} complete: {total_signals} simulated picks, "
+            f"{total_trades} simulated entries (Tomorrow.io forward test)"
+        )
+    else:
+        log.info(
+            f"Cycle #{cycle_count} complete: "
+            f"{total_signals} signals, {total_trades} {'queued' if mode == 'manual' else 'dry run signals' if mode == 'dryrun' else 'trades placed'}"
+        )
 
 
 async def main():
@@ -1200,6 +1427,10 @@ async def main():
     config.refresh_runtime_overrides(force=True)
     mode_map = {"dryrun": "🧪 DRY RUN", "manual": "👆 MANUAL", "auto": "🔴 AUTO"}
     mode = mode_map.get(ctrl.get("mode", "dryrun"), "🧪 DRY RUN")
+    forward_mode = config.STRATEGY_ENGINE == "forward_test_tomorrow"
+    if forward_mode:
+        mode = "📊 FORWARD TEST"
+        clear_pending()
 
     log.info("=" * 60)
     log.info("  WEATHER TRADER BOT — STARTING")
@@ -1216,8 +1447,15 @@ async def main():
         bankroll_str = "⚠️ FETCH FAILED (no trades until resolved)"
 
     log.info(f"  Mode: {mode}")
-    log.info(f"  Bankroll: {bankroll_str} | Kelly: full × conc | Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f}")
-    log.info(f"  Strategy: v5 (favorite ±1, per-city filters, concentration)")
+    if forward_mode:
+        log.info(f"  Bankroll: {bankroll_str} | Forward test only (no live orders)")
+        log.info(
+            f"  Strategy: Tomorrow.io forward test "
+            f"({config.TOMORROW_TIMESTEP} data, re-enter on bracket change={config.FORWARD_TEST_REENTER_ON_BRACKET_CHANGE})"
+        )
+    else:
+        log.info(f"  Bankroll: {bankroll_str} | Kelly: full × conc | Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f}")
+        log.info(f"  Strategy: v5 (favorite ±1, per-city filters, concentration)")
     log.info(f"  Max ask: 50¢ | Telegram poll: {TELEGRAM_POLL_SECONDS}s")
     log.info(f"  Kill switch: ${config.DAILY_LOSS_LIMIT:.2f} daily loss")
     log.info(f"  Cycle interval: {CYCLE_INTERVAL_SECONDS}s")
@@ -1225,22 +1463,32 @@ async def main():
     log.info(f"  Telegram configured: {'YES' if TELEGRAM_BOT_TOKEN else 'NO'}")
     log.info("=" * 60)
 
-    await send_telegram(
-        f"🚀 <b>Weather Trader Bot v5 Started</b>\n"
-        f"  Mode: {mode}\n"
-        f"  Strategy: favorite ±1, concentration Kelly\n"
-        f"  Bankroll: {bankroll_str} | Kelly: full × conc\n"
-        f"  Monitoring: London, Seoul, NYC, Seattle\n"
-        f"  Cycle: every 30 min | Poll: every 60s\n\n"
-        f"  <b>Commands:</b>\n"
-        f"  /manual — approve each trade ✅\n"
-        f"  /dryrun — log only (current)\n"
-        f"  /auto — auto-trade all signals\n"
-        f"  /signals — view pending signals\n"
-        f"  /buy_1 — approve signal #1\n"
-        f"  /status — check bot state\n"
-        f"  /help — all commands"
-    )
+    if forward_mode:
+        await send_telegram(
+            f"🚀 <b>Weather Trader Bot Forward Test Started</b>\n"
+            f"  Mode: {mode}\n"
+            f"  Strategy: Tomorrow.io ({config.TOMORROW_TIMESTEP}) + order-book snapshots\n"
+            f"  Sim behavior: re-enter on bracket change = {config.FORWARD_TEST_REENTER_ON_BRACKET_CHANGE}\n"
+            f"  Monitoring: {', '.join(c['name'] for c in CITIES.values())}\n"
+            f"  Cycle: every {CYCLE_INTERVAL_SECONDS // 60} min | Poll: every {TELEGRAM_POLL_SECONDS}s\n"
+        )
+    else:
+        await send_telegram(
+            f"🚀 <b>Weather Trader Bot v5 Started</b>\n"
+            f"  Mode: {mode}\n"
+            f"  Strategy: favorite ±1, concentration Kelly\n"
+            f"  Bankroll: {bankroll_str} | Kelly: full × conc\n"
+            f"  Monitoring: London, Seoul, NYC, Seattle\n"
+            f"  Cycle: every 30 min | Poll: every 60s\n\n"
+            f"  <b>Commands:</b>\n"
+            f"  /manual — approve each trade ✅\n"
+            f"  /dryrun — log only (current)\n"
+            f"  /auto — auto-trade all signals\n"
+            f"  /signals — view pending signals\n"
+            f"  /buy_1 — approve signal #1\n"
+            f"  /status — check bot state\n"
+            f"  /help — all commands"
+        )
 
     while True:
         try:

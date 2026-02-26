@@ -20,10 +20,11 @@ import httpx
 import config
 from ensemble import fetch_ensemble, bias_correct, map_to_brackets
 from market import fetch_wallet_balance
-from market import fetch_market, fetch_all_books, build_slug, GAMMA_API
+from market import fetch_market, fetch_all_books, build_slug, GAMMA_API, temp_to_bracket
 from metar import fetch_metar
 from risk import get_portfolio_summary, get_state
 from strategy import condition_probs_on_observed_high
+from tomorrow import fetch_tomorrow_daily_max
 
 logging.basicConfig(
     level=logging.INFO,
@@ -107,6 +108,7 @@ def build_summary() -> dict:
         config.update_bankroll(cash)
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "strategy_engine": config.STRATEGY_ENGINE,
         "control": {
             "mode": ctrl.get("mode", "dryrun"),
             "paused": bool(ctrl.get("paused", False)),
@@ -122,6 +124,11 @@ def build_summary() -> dict:
         "active_positions": active,
         "active_by_market": active_by_market,
         "runtime_effective": config.get_runtime_effective(),
+        "forward_test": {
+            "tomorrow_timestep": config.TOMORROW_TIMESTEP,
+            "reenter_on_bracket_change": config.FORWARD_TEST_REENTER_ON_BRACKET_CHANGE,
+            "sim_size": config.FORWARD_TEST_SIM_SIZE,
+        },
     }
 
 
@@ -162,6 +169,20 @@ def _book_to_dashboard_shape(book: dict) -> dict:
     }
 
 
+def _favorite_label(brackets: list[dict], prices: dict, books: dict) -> str | None:
+    best_label = None
+    best_price = -1.0
+    for b in brackets:
+        label = b.get("label")
+        if not label:
+            continue
+        ask = float((books.get(label) or {}).get("ba", prices.get(label, 0.0)) or 0.0)
+        if ask > best_price:
+            best_price = ask
+            best_label = label
+    return best_label
+
+
 async def _fetch_gas_estimate() -> dict:
     # Same rough estimate used by dashboard-side logic.
     gas_url = "https://gasstation.polygon.technology/v2"
@@ -195,8 +216,9 @@ async def _discover_city_markets_async(city_key: str) -> dict:
     city = config.CITIES[city_key]
     today = datetime.now(timezone.utc).date()
     dates = []
+    future_span = max(1, int(config.MARKET_LOOKAHEAD_DAYS))
     async with httpx.AsyncClient(timeout=10) as client:
-        for offset in range(-3, 2):
+        for offset in range(-3, future_span):
             d = today + timedelta(days=offset)
             date_str = d.strftime("%Y-%m-%d")
             slug = build_slug(city, date_str)
@@ -235,10 +257,92 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
     prices = market.get("prices", {})
     token_ids = market.get("token_ids", {})
 
-    ensemble_task = fetch_ensemble(city, date_str)
-    metar_task = fetch_metar(city, date_str)
     books_task = fetch_all_books(token_ids)
     gas_task = _fetch_gas_estimate()
+
+    # Forward-test dashboard path: Tomorrow.io + live books.
+    if config.STRATEGY_ENGINE == "forward_test_tomorrow":
+        forecast_task = fetch_tomorrow_daily_max(city, date_str)
+        forecast_res, books_res, gas_res = await asyncio.gather(
+            forecast_task,
+            books_task,
+            gas_task,
+            return_exceptions=True,
+        )
+        if isinstance(forecast_res, Exception):
+            raise forecast_res
+        forecast = forecast_res
+        books_raw = {} if isinstance(books_res, Exception) else books_res
+        books = {
+            label: _book_to_dashboard_shape(book)
+            for label, book in (books_raw or {}).items()
+        }
+        gas_data = {"gas_usd": 0.03, "pol_usd": 0.35} if isinstance(gas_res, Exception) else gas_res
+
+        predicted = temp_to_bracket(float(forecast["max_temp_market"]), brackets)
+        favorite = _favorite_label(brackets, prices, books_raw or {})
+        raw_probs = {b["label"]: (1.0 if b["label"] == predicted else 0.0) for b in brackets}
+        corrected_probs = dict(raw_probs)
+
+        pred_book = books_raw.get(predicted, {}) if predicted else {}
+        pred_ask = float(pred_book.get("ba", prices.get(predicted, 0.0)) or 0.0)
+        pred_bid = float(pred_book.get("bb", 0.0) or 0.0)
+        pred_spread = float(pred_book.get("spread", max(0.0, pred_ask - pred_bid)) or 0.0)
+
+        return {
+            "city": city_key,
+            "date": date_str,
+            "market": {
+                "slug": market.get("slug"),
+                "active": bool(market.get("active", True)),
+                "resolved": bool(market.get("resolved", False)),
+                "winner": market.get("winner"),
+                "brackets": [b["label"] for b in brackets],
+                "prices": prices,
+                "token_ids": token_ids,
+            },
+            "books": books,
+            "ensemble": {
+                "mean": float(forecast.get("max_temp_market", 0.0)),
+                "count": int(forecast.get("point_count", 0)),
+                "raw_probs": raw_probs,
+                "corrected_probs": corrected_probs,
+                "conditioning": {"source": "forward_test_tomorrow"},
+                "model_agreement": {},
+                "family_agreement": {},
+            },
+            "metar": {
+                "current_temp_c": None,
+                "day_high_c": None,
+                "day_high_market": None,
+                "observation_count": 0,
+                "latest_raw": "",
+            },
+            "gas": gas_data,
+            "forward_test": {
+                "source": forecast.get("source", "tomorrow.io"),
+                "timestep": forecast.get("timestep", ""),
+                "as_of_utc": forecast.get("as_of_utc", ""),
+                "max_temp_market": forecast.get("max_temp_market"),
+                "max_temp_c": forecast.get("max_temp_c"),
+                "max_time_utc": forecast.get("max_time_utc", ""),
+                "max_time_local": forecast.get("max_time_local", ""),
+                "predicted_bracket": predicted,
+                "favorite_bracket": favorite,
+                "simulated_trade": {
+                    "bracket": predicted,
+                    "ask": pred_ask,
+                    "bid": pred_bid,
+                    "spread": pred_spread,
+                    "contracts": config.FORWARD_TEST_SIM_SIZE,
+                    "notional": round(pred_ask * int(config.FORWARD_TEST_SIM_SIZE), 4),
+                },
+            },
+        }
+
+    # Legacy v5 snapshot path.
+    ensemble_task = fetch_ensemble(city, date_str)
+    metar_task = fetch_metar(city, date_str)
     ensemble_res, metar_res, books_res, gas_res = await asyncio.gather(
         ensemble_task,
         metar_task,

@@ -16,6 +16,90 @@ log = logging.getLogger("logger")
 LOCAL_LOG_FILE = Path("trade_log.jsonl")
 SNAPSHOT_DIR = Path("snapshots")
 SNAPSHOT_DIR.mkdir(exist_ok=True)
+FORWARD_LOG_FILE = Path("forward_test_log.jsonl")
+FORWARD_SNAPSHOT_DIR = Path("forward_snapshots")
+FORWARD_SNAPSHOT_DIR.mkdir(exist_ok=True)
+
+
+async def log_forward_cycle(
+    *,
+    city: str,
+    date_str: str,
+    market_slug: str,
+    market_active: bool,
+    market_resolved: bool,
+    market_winner: str | None,
+    prices: dict,
+    books_snapshot: dict,
+    forecast: dict,
+    simulated_trade: dict,
+    status: str = "ok",
+    note: str = "",
+):
+    """
+    Log one forward-test snapshot.
+    """
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    row = {
+        "event": "forward_cycle",
+        "timestamp": timestamp,
+        "city": city,
+        "market_date": date_str,
+        "status": status,
+        "note": note,
+        "market_slug": market_slug,
+        "market_active": bool(market_active),
+        "market_resolved": bool(market_resolved),
+        "market_winner": market_winner or "",
+        "bracket_count": len(prices or {}),
+        "book_count": len(books_snapshot or {}),
+        "tomorrow_timestep": forecast.get("timestep", ""),
+        "tomorrow_as_of_utc": forecast.get("as_of_utc", ""),
+        "tomorrow_max_market": forecast.get("max_temp_market"),
+        "tomorrow_max_c": forecast.get("max_temp_c"),
+        "tomorrow_max_time_utc": forecast.get("max_time_utc", ""),
+        "predicted_bracket": simulated_trade.get("predicted_bracket", ""),
+        "favorite_bracket": simulated_trade.get("favorite_bracket", ""),
+        "sim_action": simulated_trade.get("action", ""),
+        "sim_bracket": simulated_trade.get("bracket", ""),
+        "sim_ask": simulated_trade.get("ask"),
+        "sim_bid": simulated_trade.get("bid"),
+        "sim_spread": simulated_trade.get("spread"),
+        "sim_contracts": simulated_trade.get("contracts", 0),
+        "sim_notional": simulated_trade.get("notional", 0.0),
+    }
+    await _log_to_sheets(row)
+
+    snapshot = {
+        "event": "forward_cycle",
+        "timestamp": timestamp,
+        "city": city,
+        "market_date": date_str,
+        "status": status,
+        "note": note,
+        "market": {
+            "slug": market_slug,
+            "active": bool(market_active),
+            "resolved": bool(market_resolved),
+            "winner": market_winner,
+            "prices": prices or {},
+            "books": {
+                label: {
+                    "bb": round(float(book.get("bb", 0.0)), 4),
+                    "ba": round(float(book.get("ba", 0.0)), 4),
+                    "spread": round(float(book.get("spread", 0.0)), 4),
+                    "bid_depth": round(float(book.get("bid_depth", 0.0)), 2),
+                    "ask_depth": round(float(book.get("ask_depth", 0.0)), 2),
+                }
+                for label, book in (books_snapshot or {}).items()
+            },
+        },
+        "forecast": forecast,
+        "simulated_trade": simulated_trade,
+    }
+    _log_to_forward_local(snapshot)
+    _save_forward_snapshot(city, date_str, snapshot)
 
 
 async def log_cycle(
@@ -298,6 +382,15 @@ def _save_snapshot(city: str, date_str: str, data: dict):
         log.warning(f"Snapshot save failed: {e}")
 
 
+def _save_forward_snapshot(city: str, date_str: str, data: dict):
+    fname = FORWARD_SNAPSHOT_DIR / f"{city}_{date_str}.jsonl"
+    try:
+        with open(fname, "a") as f:
+            f.write(json.dumps(data, default=str) + "\n")
+    except IOError as e:
+        log.warning(f"Forward snapshot save failed: {e}")
+
+
 async def _log_to_sheets(row: dict):
     """Send data to Google Sheets via Apps Script webhook."""
     if not GOOGLE_SHEET_WEBHOOK:
@@ -326,3 +419,11 @@ def _log_to_local(row: dict):
             f.write(json.dumps(row, default=str) + "\n")
     except IOError as e:
         log.warning(f"Local log write failed: {e}")
+
+
+def _log_to_forward_local(row: dict):
+    try:
+        with open(FORWARD_LOG_FILE, "a") as f:
+            f.write(json.dumps(row, default=str) + "\n")
+    except IOError as e:
+        log.warning(f"Forward local log write failed: {e}")

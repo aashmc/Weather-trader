@@ -18,6 +18,12 @@ POLYGON_PRIVATE_KEY = os.getenv("POLYGON_PRIVATE_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GOOGLE_SHEET_WEBHOOK = os.getenv("GOOGLE_SHEET_WEBHOOK", "")
+TOMORROW_API_KEY = os.getenv("TOMORROW_API_KEY", "")
+
+# Runtime strategy engine:
+# - "v5": legacy ensemble + v5 filters/trading pipeline
+# - "forward_test_tomorrow": Tomorrow.io + order-book capture, no live order placement
+STRATEGY_ENGINE = os.getenv("STRATEGY_ENGINE", "forward_test_tomorrow").strip().lower()
 
 # ══════════════════════════════════════════════════════
 # TRADING PARAMETERS
@@ -65,10 +71,17 @@ API_RETRY_ATTEMPTS = 3
 API_RETRY_BACKOFF_SECONDS = 0.6
 
 # Market availability probing
-NONEXISTENT_MARKET_RECHECK_SECONDS = 900   # Recheck unopened dates every 15m (effectively each 30m cycle)
+NONEXISTENT_MARKET_RECHECK_SECONDS = 900   # Recheck unopened dates every 15m
 
-CYCLE_INTERVAL_SECONDS = 1800  # 30 minutes between main cycles
+CYCLE_INTERVAL_SECONDS = int(os.getenv("CYCLE_INTERVAL_SECONDS", "900"))  # default 15 minutes
 TELEGRAM_POLL_SECONDS = 60     # Fast polling for button presses
+MARKET_LOOKAHEAD_DAYS = max(1, int(os.getenv("MARKET_LOOKAHEAD_DAYS", "3")))
+
+# Forward-test simulation settings
+FORWARD_TEST_SIM_SIZE = max(1, int(os.getenv("FORWARD_TEST_SIM_SIZE", "1")))
+FORWARD_TEST_REENTER_ON_BRACKET_CHANGE = os.getenv(
+    "FORWARD_TEST_REENTER_ON_BRACKET_CHANGE", "true"
+).strip().lower() in ("1", "true", "yes", "on")
 
 # ══════════════════════════════════════════════════════
 # MARKET MATURITY THRESHOLDS
@@ -557,6 +570,8 @@ GAMMA_API = "https://gamma-api.polymarket.com/events"
 CLOB_API = "https://clob.polymarket.com"
 POLYGON_GAS_API = "https://gasstation.polygon.technology/v2"
 COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price"
+TOMORROW_TIMELINES_API = "https://api.tomorrow.io/v4/timelines"
+TOMORROW_TIMESTEP = os.getenv("TOMORROW_TIMESTEP", "1h").strip() or "1h"
 
 POLYMARKET_HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137  # Polygon mainnet

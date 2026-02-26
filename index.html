@@ -161,10 +161,10 @@ td:first-child{text-align:left;font-weight:500;color:var(--tx)}
 <div class="warn" id="biasWarn"></div>
 
 <div class="stats">
-<div class="st"><div class="st-l">METAR Live</div><div class="st-v" id="curT">—</div><div class="st-s" id="curTs">—</div></div>
-<div class="st"><div class="st-l">Day High (METAR)</div><div class="st-v" id="dH">—</div><div class="st-s" id="dHs">—</div></div>
-<div class="st"><div class="st-l">Ensemble Mean</div><div class="st-v" id="ensMean">—</div><div class="st-s" id="ensSrc">loading...</div></div>
-<div class="st"><div class="st-l">Execution</div><div class="st-v">LIVE</div><div class="st-s">strict filters enabled</div></div>
+<div class="st"><div class="st-l">Forecast Source</div><div class="st-v" id="curT">—</div><div class="st-s" id="curTs">—</div></div>
+<div class="st"><div class="st-l">Tomorrow Max</div><div class="st-v" id="dH">—</div><div class="st-s" id="dHs">—</div></div>
+<div class="st"><div class="st-l">Predicted Bracket</div><div class="st-v" id="ensMean">—</div><div class="st-s" id="ensSrc">loading...</div></div>
+<div class="st"><div class="st-l">Execution</div><div class="st-v">SIM</div><div class="st-s">forward test only</div></div>
 </div>
 
 <div id="entryTiming" style="display:none;padding:8px 14px;border-radius:6px;margin-bottom:8px;font-size:11px;border:1px solid var(--dm)"></div>
@@ -357,6 +357,8 @@ let ACTIVE_MARKET_BRACKETS={};
 let BOT_PAUSED=false;
 let RUNTIME_EFFECTIVE={};
 let API_CONNECTED=false;
+window._forwardMode=false;
+window._forwardPredictedBracket=null;
 
 function uniq(arr){return [...new Set(arr.filter(Boolean))]}
 function escAttr(v){return String(v??"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
@@ -397,7 +399,10 @@ function updateTopChips(summary){
   const active=summary?.portfolio?.active_positions;
   const key=`${cityDisplayName(CITY.name)}:${ACTIVE_DATE.dateStr}`;
   const currentMarketActive=(summary?.active_by_market?.[key]||[]).length;
-  const mode=summary?.control?.mode||"manual";
+  const strategyEngine=summary?.strategy_engine||"";
+  const mode=(strategyEngine==="forward_test_tomorrow")
+    ?"forward_test"
+    :(summary?.control?.mode||"manual");
   BOT_PAUSED=!!summary?.control?.paused;
   $("chipBankroll").innerHTML=`Bankroll: <b>${cash>=0?`$${Number(cash).toFixed(2)}`:"—"}</b>`;
   $("chipExposure").innerHTML=`Exposure: <b>${typeof exp==="number"?`$${exp.toFixed(2)}`:"—"}</b>`;
@@ -768,17 +773,11 @@ function selectCity(key){
   $("stationInfo").textContent=CITY.icao+" "+CITY.lat.toFixed(3)+"°N "+Math.abs(CITY.lon).toFixed(3)+"°"+(CITY.lon>=0?"E":"W");
   $("curTs").textContent="station "+CITY.icao;
   $("curT").textContent="—";$("dH").textContent="—";$("ensMean").textContent="—";
-  // Update bias banner
-  if(CITY.bias.sd>0){
-    const modelList=CITY.ensembleModels.split(",").map(m=>m.replace("_ensemble","").replace("_eps","").replace("_seamless","").replace("_global","").replace("025","")).join(" + ");
-    $("biasWarn").innerHTML=`<b>Bias</b>: +${CITY.bias.mean}${unitLabel()} σ=${CITY.bias.sd} (${CITY.bias.note}) · Models: ${modelList}${CITY.syntheticModel?" + KMA":""}`;
-    $("biasWarn").style.display="";
-  }else{
-    $("biasWarn").innerHTML=`<b>No bias correction</b> — ${CITY.name} uncalibrated. Using raw ensemble probabilities.`;
-    $("biasWarn").style.display="";
-  }
+  // Forward-test banner
+  $("biasWarn").innerHTML=`<b>Forward Test</b>: Tomorrow.io ${CITY.tz} forecast + live CLOB books. v5 filters/orders are disabled.`;
+  $("biasWarn").style.display="";
   // Update footer
-  $("footer").innerHTML=`Not financial advice · Ensemble: Open-Meteo · Bias: +${CITY.bias.mean}${unitLabel()} σ=${CITY.bias.sd} (METAR-calibrated) · Resolution: <a href="${CITY.wunderground}" target="_blank">Wunderground ${CITY.icao}</a>`;
+  $("footer").innerHTML=`Forward test mode · Forecast source: Tomorrow.io · Resolution reference: <a href="${CITY.wunderground}" target="_blank">Wunderground ${CITY.icao}</a>`;
   // Re-initialize dates for this city
   ACTIVE_DATE=buildDateConfig(new Date().toISOString().split("T")[0]);
   ALL_DATES=generateDates().map(buildDateConfig);
@@ -803,6 +802,12 @@ function renderCityNav(){
 // TRADING MODE
 // ══════════════════════════════════════════════════════════
 function applyFilters(a){
+  if(window._forwardMode){
+    if(a.bracket===window._forwardPredictedBracket){
+      return {pass:true,reasons:[]};
+    }
+    return {pass:false,reasons:["Forward test: only predicted bracket is simulated"]};
+  }
   const f=F(),reasons=[];
   if(!a.isCandidate)reasons.push("Outside favorite ±1");
   if(a.trueEdge<f.minEdge)reasons.push(`Edge ${(a.trueEdge*100).toFixed(1)}pt < ${(f.minEdge*100)}pt min`);
@@ -984,27 +989,46 @@ async function fetchDashboardSnapshot(){
     ensMean=Number(ens.mean||0);
     ensCount=Number(ens.count||0);
     window._modelAgreement=ens.model_agreement||{};
-    $("ensMean").textContent=ensCount?ensMean.toFixed(1)+unitLabel():"—";
-    $("ensSrc").textContent=ensCount?`${ensCount} members · backend`:"error";
-
-    const met=snap.metar||{};
-    metarTemp=typeof met.current_temp_c==="number"?met.current_temp_c:null;
-    metarHigh=typeof met.day_high_c==="number"?met.day_high_c:null;
-    metarDayMax=met.day_high_market==null?null:met.day_high_market;
-    if(metarTemp!=null){
-      const displayTemp=CITY.unit==="F"?cToF(metarTemp).toFixed(0)+"°F":metarTemp+"°C";
-      $("curT").textContent=displayTemp;
-    }else{$("curT").textContent="—"}
-    const latestRaw=String(met.latest_raw||"");
-    if(latestRaw.toLowerCase().includes("open-meteo"))$("curTs").textContent="Open-Meteo (not METAR)";
-    else if(latestRaw)$("curTs").textContent="METAR "+latestRaw.substring(5,16);
-    else $("curTs").textContent="METAR unavailable";
-    if(metarDayMax!=null){
-      $("dH").textContent=CITY.unit==="F"?`${Math.round(metarDayMax)}°F`:`${metarDayMax}°C`;
-      $("dHs").textContent="METAR max "+ACTIVE_DATE.displayShort;
+    const fwd=snap.forward_test||null;
+    window._forwardMode=!!fwd;
+    window._forwardPredictedBracket=fwd?.predicted_bracket||null;
+    if(fwd){
+      $("ensMean").textContent=fwd.predicted_bracket||"—";
+      const sim=fwd.simulated_trade||{};
+      $("ensSrc").textContent=`${fwd.timestep||"1h"} · ask ${(Number(sim.ask||0)*100).toFixed(1)}¢`;
+      $("curT").textContent="Tomorrow.io";
+      $("curTs").textContent=fwd.as_of_utc?`as of ${String(fwd.as_of_utc).substring(11,16)} UTC`:"live";
+      const maxVal=Number(fwd.max_temp_market);
+      if(Number.isFinite(maxVal)){
+        $("dH").textContent=CITY.unit==="F"?`${Math.round(maxVal)}°F`:`${maxVal.toFixed(1)}°C`;
+      }else{
+        $("dH").textContent="—";
+      }
+      $("dHs").textContent=`Predicted daily max (${fwd.timestep||"1h"})`;
+      metarTemp=null;metarHigh=null;metarDayMax=null;
     }else{
-      $("dH").textContent="—";
-      $("dHs").textContent=ACTIVE_DATE.isToday?"Awaiting data":(ACTIVE_DATE.isPast?"Loading...":"Forecast only");
+      $("ensMean").textContent=ensCount?ensMean.toFixed(1)+unitLabel():"—";
+      $("ensSrc").textContent=ensCount?`${ensCount} members · backend`:"error";
+
+      const met=snap.metar||{};
+      metarTemp=typeof met.current_temp_c==="number"?met.current_temp_c:null;
+      metarHigh=typeof met.day_high_c==="number"?met.day_high_c:null;
+      metarDayMax=met.day_high_market==null?null:met.day_high_market;
+      if(metarTemp!=null){
+        const displayTemp=CITY.unit==="F"?cToF(metarTemp).toFixed(0)+"°F":metarTemp+"°C";
+        $("curT").textContent=displayTemp;
+      }else{$("curT").textContent="—"}
+      const latestRaw=String(met.latest_raw||"");
+      if(latestRaw.toLowerCase().includes("open-meteo"))$("curTs").textContent="Open-Meteo (not METAR)";
+      else if(latestRaw)$("curTs").textContent="METAR "+latestRaw.substring(5,16);
+      else $("curTs").textContent="METAR unavailable";
+      if(metarDayMax!=null){
+        $("dH").textContent=CITY.unit==="F"?`${Math.round(metarDayMax)}°F`:`${metarDayMax}°C`;
+        $("dHs").textContent="METAR max "+ACTIVE_DATE.displayShort;
+      }else{
+        $("dH").textContent="—";
+        $("dHs").textContent=ACTIVE_DATE.isToday?"Awaiting data":(ACTIVE_DATE.isPast?"Loading...":"Forecast only");
+      }
     }
 
     const gas=snap.gas||{};
@@ -1015,6 +1039,8 @@ async function fetchDashboardSnapshot(){
   }catch(e){
     B=[];prices={};TOKENS={};books={};
     rawProbs={};corrProbs={};ensMean=0;ensCount=0;
+    window._forwardMode=false;
+    window._forwardPredictedBracket=null;
     $("ensMean").textContent="—";$("ensSrc").textContent="error";
     log("Snapshot API: "+e.message,"le");
   }

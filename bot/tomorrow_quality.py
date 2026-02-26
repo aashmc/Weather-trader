@@ -24,6 +24,8 @@ from metar import fetch_metar
 log = logging.getLogger("tomorrow_quality")
 
 STATE_FILE = Path("tomorrow_quality_state.json")
+HOURLY_LOG_FILE = Path("forward_hourly_hit_log.jsonl")
+HOURLY_PRED_FILE = Path("forward_hourly_predictions.jsonl")
 
 
 def _load_state() -> dict:
@@ -36,8 +38,10 @@ def _load_state() -> dict:
             log.warning("Tomorrow quality state corrupted, starting fresh")
     return {
         "snapshots": {},        # {city:date: {buckets:{near/mid/far}, latest:{...}}}
+        "market_series": {},    # {city:date: {opened_at_utc, hours:{idx: {...}}}}
         "errors": {},           # {city: {near:[], mid:[], far:[]}}
         "resolved_metrics": {}, # {city: [records]}
+        "resolved_hourly": [],  # [{market_key, city, date, hour_since_open, hit, ...}]
         "resolved_keys": {},    # {city:date: winner}
         "report_meta": {"last_sent_date_utc": ""},
     }
@@ -81,6 +85,14 @@ def _normalize_probs(bracket_probs: dict[str, float]) -> dict[str, float]:
     if total <= 0:
         return {}
     return {k: v / total for k, v in clean.items()}
+
+
+def _append_jsonl(path: Path, row: dict):
+    try:
+        with open(path, "a") as f:
+            f.write(json.dumps(row, default=str) + "\n")
+    except IOError as exc:
+        log.warning("Failed writing %s: %s", path, exc)
 
 
 def _rolling_stats(values: list[float]) -> tuple[float, float]:
@@ -134,6 +146,50 @@ def record_forward_snapshot(
     market_snap = state.setdefault("snapshots", {}).setdefault(key, {"buckets": {}})
     market_snap.setdefault("buckets", {})[lead_bucket] = snap
     market_snap["latest"] = snap
+
+    # Hour-by-hour raw prediction timeline since this market was first seen.
+    series = state.setdefault("market_series", {}).setdefault(
+        key,
+        {
+            "city": city_name,
+            "date": date_str,
+            "opened_at_utc": ts,
+            "hours": {},
+        },
+    )
+    try:
+        opened_dt = datetime.fromisoformat(str(series.get("opened_at_utc", ts)))
+    except ValueError:
+        opened_dt = datetime.fromisoformat(ts)
+        series["opened_at_utc"] = ts
+    now_dt = datetime.fromisoformat(ts)
+    hour_idx = max(0, int((now_dt - opened_dt).total_seconds() // 3600))
+
+    probs = _normalize_probs(bracket_probs)
+    predicted = max(probs, key=probs.get) if probs else ""
+    predicted_prob = float(probs.get(predicted, 0.0)) if predicted else 0.0
+    hour_key = str(hour_idx)
+    if hour_key not in series.setdefault("hours", {}):
+        hour_row = {
+            "timestamp": ts,
+            "market_key": key,
+            "city": city_name,
+            "date": date_str,
+            "opened_at_utc": str(series.get("opened_at_utc", ts)),
+            "hour_since_open": hour_idx,
+            "lead_bucket": lead_bucket,
+            "forecast_max_market": (
+                None if forecast_max_market is None else float(forecast_max_market)
+            ),
+            "predicted_bracket": predicted,
+            "predicted_prob": predicted_prob,
+            "probability_source": str(probability_source or ""),
+            "probabilistic": bool(probabilistic),
+        }
+        series["hours"][hour_key] = hour_row
+        _append_jsonl(HOURLY_PRED_FILE, hour_row)
+    series["latest_ts"] = ts
+
     _save_state(state)
 
 
@@ -200,7 +256,7 @@ async def record_forward_resolution(
     # don't create a fake zero-quality record.
     has_snapshot = bool(bracket_probs) or (forecast_max is not None)
     if not has_snapshot:
-        state.setdefault("resolved_keys", {})[key] = f"nosnapshot:{winner}"
+        state.setdefault("resolved_keys", {})[key] = winner
         _save_state(state)
         return {"recorded": False, "reason": "no_snapshot", "record": None}
 
@@ -249,6 +305,41 @@ async def record_forward_resolution(
         "probability_source": probability_source,
     }
 
+    series = state.get("market_series", {}).get(key, {}) or {}
+    hourly_map = series.get("hours", {}) if isinstance(series, dict) else {}
+    hourly_eval = []
+    for hk, hv in sorted(
+        (hourly_map or {}).items(),
+        key=lambda kv: int(kv[0]) if str(kv[0]).isdigit() else 10**9,
+    ):
+        if not isinstance(hv, dict):
+            continue
+        pred = str(hv.get("predicted_bracket", "") or "")
+        h = int(hv.get("hour_since_open", int(hk) if str(hk).isdigit() else 0))
+        pp = float(hv.get("predicted_prob", 0.0) or 0.0)
+        row = {
+            "market_key": key,
+            "city": city_name,
+            "date": date_str,
+            "winner": winner,
+            "hour_since_open": h,
+            "snapshot_ts": str(hv.get("timestamp", "")),
+            "predicted_bracket": pred,
+            "predicted_prob": pp,
+            "hit": bool(pred and pred == winner),
+            "probability_source": str(hv.get("probability_source", "") or ""),
+            "probabilistic": bool(hv.get("probabilistic", False)),
+        }
+        hourly_eval.append(row)
+        _append_jsonl(HOURLY_LOG_FILE, row)
+
+    rec["hourly_points"] = len(hourly_eval)
+    if hourly_eval:
+        h0 = min(hourly_eval, key=lambda r: int(r.get("hour_since_open", 0)))
+        hl = max(hourly_eval, key=lambda r: int(r.get("hour_since_open", 0)))
+        rec["h0_hit"] = bool(h0.get("hit"))
+        rec["h_last_hit"] = bool(hl.get("hit"))
+
     city_hist = state.setdefault("resolved_metrics", {}).setdefault(city_name, [])
     city_hist = [h for h in city_hist if h.get("date") != date_str]
     city_hist.append(rec)
@@ -256,6 +347,13 @@ async def record_forward_resolution(
     if len(city_hist) > 1500:
         city_hist = city_hist[-1500:]
     state["resolved_metrics"][city_name] = city_hist
+
+    resolved_hourly = state.setdefault("resolved_hourly", [])
+    resolved_hourly = [r for r in resolved_hourly if r.get("market_key") != key]
+    resolved_hourly.extend(hourly_eval)
+    if len(resolved_hourly) > 200_000:
+        resolved_hourly = resolved_hourly[-200_000:]
+    state["resolved_hourly"] = resolved_hourly
 
     state.setdefault("resolved_keys", {})[key] = winner
     _save_state(state)
@@ -396,6 +494,52 @@ def build_daily_report_message(now_utc: datetime | None = None) -> dict | None:
             "avg_winner_prob": winner_prob_avg,
             "mae": mae,
         }
+
+    # Add cumulative hourly hit-rate summary (hour since market-open).
+    hourly = state.get("resolved_hourly", []) or []
+    agg: dict[int, dict] = {}
+    for r in hourly:
+        try:
+            h = int(r.get("hour_since_open", 0))
+        except (TypeError, ValueError):
+            continue
+        hit = 1 if bool(r.get("hit")) else 0
+        pp = float(r.get("predicted_prob", 0.0) or 0.0)
+        slot = agg.setdefault(h, {"n": 0, "hit": 0, "p_sum": 0.0})
+        slot["n"] += 1
+        slot["hit"] += hit
+        slot["p_sum"] += pp
+
+    hourly_lines = []
+    hourly_payload = []
+    for h in sorted(agg.keys()):
+        slot = agg[h]
+        n = int(slot["n"])
+        if n <= 0:
+            continue
+        hr = float(slot["hit"]) / n
+        ap = float(slot["p_sum"]) / n
+        hourly_payload.append(
+            {
+                "hour_since_open": h,
+                "samples": n,
+                "hit_rate": hr,
+                "avg_predicted_prob": ap,
+            }
+        )
+        if h <= 24 and n >= 3:
+            hourly_lines.append(
+                f"  h{h}: {hr*100:.1f}% ({slot['hit']}/{n}), avg p={ap*100:.1f}%"
+            )
+
+    if hourly_lines:
+        message = (
+            payload["message"]
+            + "\n  <b>Hourly hit-rate (cumulative):</b>\n"
+            + "\n".join(hourly_lines[:12])
+        )
+        payload["message"] = message
+    payload["hourly_hit_rate"] = hourly_payload
 
     return payload
 

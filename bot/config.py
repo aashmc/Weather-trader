@@ -79,7 +79,7 @@ API_RETRY_BACKOFF_SECONDS = 0.6
 # Market availability probing
 NONEXISTENT_MARKET_RECHECK_SECONDS = 900   # Recheck unopened dates every 15m
 
-CYCLE_INTERVAL_SECONDS = int(os.getenv("CYCLE_INTERVAL_SECONDS", "900"))  # default 15 minutes
+CYCLE_INTERVAL_SECONDS = int(os.getenv("CYCLE_INTERVAL_SECONDS", "3600"))  # default 1 hour
 TELEGRAM_POLL_SECONDS = 60     # Fast polling for button presses
 MARKET_LOOKAHEAD_DAYS = max(1, int(os.getenv("MARKET_LOOKAHEAD_DAYS", "3")))
 
@@ -578,6 +578,21 @@ POLYGON_GAS_API = "https://gasstation.polygon.technology/v2"
 COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price"
 TOMORROW_TIMELINES_API = "https://api.tomorrow.io/v4/timelines"
 TOMORROW_TIMESTEP = os.getenv("TOMORROW_TIMESTEP", "1h").strip() or "1h"
+TOMORROW_CACHE_TTL_SECONDS = max(60, int(os.getenv("TOMORROW_CACHE_TTL_SECONDS", "3600")))
+TOMORROW_MONTE_CARLO_SAMPLES = max(200, int(os.getenv("TOMORROW_MONTE_CARLO_SAMPLES", "2500")))
+TOMORROW_DEFAULT_SIGMA_C = max(0.1, float(os.getenv("TOMORROW_DEFAULT_SIGMA_C", "1.2")))
+# Request these fields first; if plan/endpoint rejects any, code falls back to plain temperature.
+TOMORROW_PROB_FIELDS = [
+    x.strip()
+    for x in os.getenv(
+        "TOMORROW_PROB_FIELDS",
+        (
+            "temperature,temperatureP10,temperatureP25,temperatureP50,"
+            "temperatureP75,temperatureP90,temperatureMin,temperatureMax,temperatureAvg"
+        ),
+    ).split(",")
+    if x.strip()
+]
 
 POLYMARKET_HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137  # Polygon mainnet

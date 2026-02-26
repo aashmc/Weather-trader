@@ -224,9 +224,14 @@ def _build_forward_trade_decision(
     brackets: list[dict],
     prices: dict,
     books: dict,
-    forecast_max_market: float,
+    forecast_max_market: float | None = None,
+    predicted_bracket: str | None = None,
 ) -> dict:
-    predicted = temp_to_bracket(forecast_max_market, brackets)
+    predicted = predicted_bracket
+    if not predicted:
+        if forecast_max_market is None:
+            raise ValueError("missing forecast_max_market for forward decision")
+        predicted = temp_to_bracket(forecast_max_market, brackets)
     favorite = _favorite_bracket(brackets, prices, books)
     book = books.get(predicted or "", {})
     ask = float(book.get("ba", prices.get(predicted or "", 0.0)) or 0.0)
@@ -698,6 +703,25 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
 
         forecast = await fetch_tomorrow_daily_max(city, date_str)
         books = await fetch_all_books(token_ids)
+
+        predicted = None
+        bracket_probs = {}
+        dist_market_raw = forecast.get("max_dist_market") or {}
+        if dist_market_raw:
+            dist_market = {}
+            for k, v in dist_market_raw.items():
+                try:
+                    dist_market[int(k)] = float(v)
+                except (TypeError, ValueError):
+                    continue
+            if dist_market:
+                bracket_probs = map_to_brackets(dist_market, brackets)
+                s = sum(bracket_probs.values())
+                if s > 0:
+                    bracket_probs = {k: v / s for k, v in bracket_probs.items()}
+                if bracket_probs:
+                    predicted = max(bracket_probs, key=bracket_probs.get)
+
         sim = _build_forward_trade_decision(
             city_name=city_name,
             date_str=date_str,
@@ -705,15 +729,21 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
             prices=prices,
             books=books,
             forecast_max_market=float(forecast["max_temp_market"]),
+            predicted_bracket=predicted,
         )
+        if predicted and bracket_probs:
+            sim["predicted_prob"] = round(float(bracket_probs.get(predicted, 0.0)), 4)
+        sim["probability_source"] = forecast.get("probability_source", "deterministic")
+        sim["probabilistic"] = bool(forecast.get("probabilistic", False))
 
         log.info(
-            "%s %s: Tomorrow max %.1f%s -> %s | action=%s ask=%.3f spread=%.3f",
+            "%s %s: Tomorrow max %.1f%s -> %s (p=%s) | action=%s ask=%.3f spread=%.3f",
             city_name,
             date_str,
             float(forecast["max_temp_market"]),
             "°F" if city["unit"] == "F" else "°C",
             sim.get("bracket") or "?",
+            f"{(sim.get('predicted_prob', 0.0) * 100):.1f}%" if sim.get("predicted_prob") is not None else "n/a",
             sim.get("action", "n/a"),
             float(sim.get("ask") or 0.0),
             float(sim.get("spread") or 0.0),

@@ -279,10 +279,27 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
         }
         gas_data = {"gas_usd": 0.03, "pol_usd": 0.35} if isinstance(gas_res, Exception) else gas_res
 
-        predicted = temp_to_bracket(float(forecast["max_temp_market"]), brackets)
+        dist_market_raw = forecast.get("max_dist_market") or {}
+        dist_market: dict[int, float] = {}
+        for k, v in dist_market_raw.items():
+            try:
+                dist_market[int(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+
+        if dist_market:
+            raw_probs = map_to_brackets(dist_market, brackets)
+            s = sum(raw_probs.values())
+            if s > 0:
+                raw_probs = {k: v / s for k, v in raw_probs.items()}
+            corrected_probs = dict(raw_probs)
+            predicted = max(corrected_probs, key=corrected_probs.get) if corrected_probs else temp_to_bracket(float(forecast["max_temp_market"]), brackets)
+        else:
+            predicted = temp_to_bracket(float(forecast["max_temp_market"]), brackets)
+            raw_probs = {b["label"]: (1.0 if b["label"] == predicted else 0.0) for b in brackets}
+            corrected_probs = dict(raw_probs)
+
         favorite = _favorite_label(brackets, prices, books_raw or {})
-        raw_probs = {b["label"]: (1.0 if b["label"] == predicted else 0.0) for b in brackets}
-        corrected_probs = dict(raw_probs)
 
         pred_book = books_raw.get(predicted, {}) if predicted else {}
         pred_ask = float(pred_book.get("ba", prices.get(predicted, 0.0)) or 0.0)
@@ -321,12 +338,18 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
             "gas": gas_data,
             "forward_test": {
                 "source": forecast.get("source", "tomorrow.io"),
+                "probability_source": forecast.get("probability_source", "deterministic"),
+                "probabilistic": bool(forecast.get("probabilistic", False)),
+                "used_fields": forecast.get("used_fields", ""),
+                "cache": forecast.get("cache", "miss"),
+                "cache_age_seconds": int(forecast.get("cache_age_seconds", 0) or 0),
                 "timestep": forecast.get("timestep", ""),
                 "as_of_utc": forecast.get("as_of_utc", ""),
                 "max_temp_market": forecast.get("max_temp_market"),
                 "max_temp_c": forecast.get("max_temp_c"),
                 "max_time_utc": forecast.get("max_time_utc", ""),
                 "max_time_local": forecast.get("max_time_local", ""),
+                "max_dist_market": dist_market,
                 "predicted_bracket": predicted,
                 "favorite_bracket": favorite,
                 "simulated_trade": {

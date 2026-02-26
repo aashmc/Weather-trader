@@ -1311,12 +1311,19 @@ async function fetchDashboardSnapshot(){
 
     log(`Snapshot API: ${CITY.name} ${ACTIVE_DATE.displayShort} (${B.length} brackets)`,"lo");
   }catch(e){
+    const msg=(e&&e.message)?String(e.message):"snapshot failed";
     B=[];prices={};TOKENS={};books={};
     rawProbs={};corrProbs={};ensMean=0;ensCount=0;
     window._forwardMode=false;
     window._forwardPredictedBracket=null;
     $("ensMean").textContent="—";$("ensSrc").textContent="error";
-    log("Snapshot API: "+e.message,"le");
+    $("sigT").textContent="Snapshot error";
+    $("sigN").textContent="NO DATA";
+    $("sigD").innerHTML=`<div style="font-size:11px;color:var(--rd);margin:2px 0">${escHtml(msg)}</div>`;
+    $("blockedSummary").innerHTML="";
+    $("dHs").textContent=msg;
+    setApiMsg(`Snapshot error: ${msg}`,true);
+    log("Snapshot API: "+msg,"le");
   }
 }
 

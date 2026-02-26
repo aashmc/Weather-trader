@@ -420,15 +420,15 @@ tbody tr:nth-child(even) td{background:#fbfdfc}
               <tr>
                 <th style="text-align:left">Bracket</th>
                 <th style="text-align:center">Signal</th>
-                <th>Raw %</th>
-                <th>Corrected %</th>
+                <th id="thRaw">Raw %</th>
+                <th id="thCorrected">Corrected %</th>
                 <th>Market %</th>
                 <th>Bid</th>
                 <th>Ask</th>
                 <th>Spread</th>
                 <th>Raw Edge</th>
                 <th style="color:var(--gn)">True Edge</th>
-                <th>Models</th>
+                <th id="thModels">Models</th>
                 <th>Bet</th>
                 <th>E[P]</th>
               </tr>
@@ -452,9 +452,9 @@ tbody tr:nth-child(even) td{background:#fbfdfc}
 
       <div class="split-panels">
         <div class="pn" id="histPanel" style="display:none">
-          <div class="pt">Distribution: Raw → Corrected → Market</div>
+          <div class="pt" id="histTitle">Distribution: Raw → Corrected → Market</div>
           <div class="hist" id="hist"></div>
-          <div style="display:flex;gap:14px;margin-top:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dm)">
+          <div id="histLegend" style="display:flex;gap:14px;margin-top:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dm)">
             <span style="color:var(--h1)">◼ Raw</span>
             <span style="color:var(--h2)">◼ Corrected</span>
             <span style="opacity:.35">◼ Market</span>
@@ -1048,7 +1048,7 @@ function selectCity(key){
   $("curTs").textContent="station "+CITY.icao;
   $("curT").textContent="—";$("dH").textContent="—";$("ensMean").textContent="—";
   // Forward-test banner
-  $("biasWarn").innerHTML=`<b>Forward Test</b>: Tomorrow.io ${CITY.tz} forecast + live CLOB books. v5 filters/orders are disabled.`;
+  $("biasWarn").innerHTML=`<b>Forward Test</b>: Tomorrow.io ${CITY.tz} forecast + live CLOB books. Deterministic mapping is used (predicted bracket = 100%, others = 0%); v5 filters/orders are disabled.`;
   $("biasWarn").style.display="";
   // Update footer
   $("footer").innerHTML=`Forward test mode · Forecast source: Tomorrow.io · Resolution reference: <a href="${CITY.wunderground}" target="_blank">Wunderground ${CITY.icao}</a>`;
@@ -1333,6 +1333,16 @@ async function fetchDashboardSnapshot(){
 function render(){
   if(!B.length||!Object.keys(prices).length)return;
   if(!Object.keys(corrProbs).length&&!Object.keys(rawProbs).length)return;
+  const isForward=!!window._forwardMode;
+  if($("thRaw"))$("thRaw").textContent=isForward?"Pred %":"Raw %";
+  if($("thCorrected"))$("thCorrected").textContent=isForward?"Adj %":"Corrected %";
+  if($("thModels"))$("thModels").textContent=isForward?"Source":"Models";
+  if($("histTitle"))$("histTitle").textContent=isForward?"Forward View: Predicted Bracket vs Market":"Distribution: Raw → Corrected → Market";
+  if($("histLegend")){
+    $("histLegend").innerHTML=isForward
+      ?`<span style="color:var(--h2)">◼ Predicted</span><span style="opacity:.35">◼ Market</span>`
+      :`<span style="color:var(--h1)">◼ Raw</span><span style="color:var(--h2)">◼ Corrected</span><span style="opacity:.35">◼ Market</span>`;
+  }
   const useRaw=!Object.keys(corrProbs).length; // if no corrected, use raw
   const ma=window._modelAgreement||{};
   const favoriteLabel=B.reduce((best,label)=>{
@@ -1439,13 +1449,15 @@ function render(){
     bn.style.borderColor="rgba(22,163,74,.2)";$("sigT").style.color="var(--gn)";
     $("sigT").textContent="BUY (strict filters passed)";
     $("sigN").textContent=best.bracket;
+    const totalModels=CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0);
+    const modelValue=isForward?"Tomorrow.io":`${best.modelVotes}/${totalModels}`;
     $("sigD").innerHTML=[
       ["Corrected",(best.corP*100).toFixed(1)+"%","var(--gn)"],
       ["Ask",(best.ask*100).toFixed(1)+"¢","var(--tx)"],
       ["Eff Ask",(best.effectiveAsk*100).toFixed(1)+"¢","var(--tx)"],
       ["Fill",(best.fillFraction*100).toFixed(0)+"%","var(--tx)"],
       ["True Edge","+"+(best.trueEdge*100).toFixed(1)+"pt","var(--gn)"],
-      ["Models",best.modelVotes+"/"+(CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0)),"var(--gn)"],
+      [isForward?"Source":"Models",modelValue,isForward?"var(--h2)":"var(--gn)"],
       ["⅓Kelly","$"+best.bet.toFixed(2),"var(--gn)"],
       ["E[Profit]","+$"+best.ev.toFixed(2),"var(--gn)"],
     ].map(([l,v,c])=>`<div class="si"><div class="si-l">${l}</div><div class="si-v" style="color:${c}">${v}</div></div>`).join("");
@@ -1486,8 +1498,9 @@ function render(){
     else tg='<span style="color:var(--dm);font-size:10px">—</span>';
     if(a.bet>0){tB+=a.bet;tE+=a.ev}
     const totalModels=CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0);
-    const mvPct=totalModels>0?a.modelVotes/totalModels:0;
-    const mvC=mvPct>=0.75?"var(--gn)":mvPct>=0.5?"var(--am)":"var(--rd)";
+    const mvPct=!isForward&&totalModels>0?a.modelVotes/totalModels:0;
+    const mvC=isForward?"var(--dm)":(mvPct>=0.75?"var(--gn)":mvPct>=0.5?"var(--am)":"var(--rd)");
+    const modelCell=isForward?"Tomorrow.io":`${a.modelVotes}/${totalModels}`;
     const ft=isF&&a.filterReasons?` title="${escAttr(a.filterReasons.join("; "))}"`:"";
     const isMktFav=maxMktP>0&&Math.abs((a.mktP||0)-maxMktP)<1e-9;
     h+=`<tr class="${hl?"rh":""} ${a.isActive?"pos-w":""}"${ft}><td>${a.bracket}</td>
@@ -1499,7 +1512,7 @@ function render(){
     <td style="color:var(--dm)">${a.spread>0?(a.spread*100).toFixed(1)+"¢":"—"}</td>
     <td style="color:${a.rawEdge>0?"rgba(22,163,74,.5)":"var(--dm)"}">${a.rawEdge>=0?"+":""}${(a.rawEdge*100).toFixed(1)}</td>
     <td style="color:${tec};font-weight:700">${a.trueEdge>=0?"+":""}${(a.trueEdge*100).toFixed(1)}</td>
-    <td style="color:${mvC};font-size:11px">${a.modelVotes}/${CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0)}</td>
+    <td style="color:${mvC};font-size:11px">${modelCell}</td>
     <td style="color:${a.bet>0?"var(--gn)":a.isActive?"var(--h1)":"var(--dm)"}">${a.bet>0?"$"+a.bet.toFixed(2):a.isActive?"HOLD":"—"}</td>
     <td style="color:${a.ev>0?"var(--gn)":"var(--dm)"}">${a.ev>0?"+$"+a.ev.toFixed(2):"—"}</td></tr>`;
   }
@@ -1513,11 +1526,14 @@ function render(){
   const vis=B.filter(b=>(rawProbs[b]||0)>.001||(corrProbs[b]||0)>.001||(prices[b]||0)>.01);
   if(vis.length){$("histPanel").style.display="block";
     if($("logPanel"))$("logPanel").style.gridColumn="auto";
-    const mxP=0.40;
+    const mxP=isForward?1.0:0.40;
     $("hist").innerHTML=vis.map(b=>{
       const rp=rawProbs[b]||0,cp=(useRaw?rp:corrProbs[b])||0,mp=prices[b]||0;
-      const rH=Math.max(rp>.005?2:0,rp/mxP*100),cH=Math.max(cp>.005?2:0,cp/mxP*100),mH=Math.max(mp>.005?2:0,mp/mxP*100);
-      return`<div class="hc"><div class="hp">${(cp*100).toFixed(0)}%</div><div class="hbs"><div class="hb1" style="height:${rH}%;background:var(--h1);opacity:.45"></div><div class="hb2" style="height:${cH}%;background:var(--h2);opacity:.7"></div><div class="hb3" style="height:${mH}%;background:rgba(26,26,46,.15)"></div></div><div class="hl">${bracketShortLabel(b)}</div></div>`;
+      const rH=isForward?0:Math.max(rp>.005?2:0,rp/mxP*100);
+      const cH=Math.max(cp>.005?2:0,cp/mxP*100),mH=Math.max(mp>.005?2:0,mp/mxP*100);
+      const rawStyle=isForward?'display:none':'';
+      const topLabel=isForward?(b===(window._forwardPredictedBracket||"")?"PRED":""):`${(cp*100).toFixed(0)}%`;
+      return`<div class="hc"><div class="hp">${topLabel}</div><div class="hbs"><div class="hb1" style="${rawStyle};height:${rH}%;background:var(--h1);opacity:.45"></div><div class="hb2" style="height:${cH}%;background:var(--h2);opacity:.7"></div><div class="hb3" style="height:${mH}%;background:rgba(26,26,46,.15)"></div></div><div class="hl">${bracketShortLabel(b)}</div></div>`;
     }).join("");
   }else{
     $("histPanel").style.display="none";

@@ -1048,7 +1048,7 @@ function selectCity(key){
   $("curTs").textContent="station "+CITY.icao;
   $("curT").textContent="—";$("dH").textContent="—";$("ensMean").textContent="—";
   // Forward-test banner
-  $("biasWarn").innerHTML=`<b>Forward Test</b>: Tomorrow.io ${CITY.tz} forecast + live CLOB books. Deterministic mapping is used (predicted bracket = 100%, others = 0%); v5 filters/orders are disabled.`;
+  $("biasWarn").innerHTML=`<b>Forward Test</b>: Tomorrow.io ${CITY.tz} forecast + live CLOB books. Probabilistic fields are used when available; otherwise calibrated fallback is used. v5 filters/orders are disabled.`;
   $("biasWarn").style.display="";
   // Update footer
   $("footer").innerHTML=`Forward test mode · Forecast source: Tomorrow.io · Resolution reference: <a href="${CITY.wunderground}" target="_blank">Wunderground ${CITY.icao}</a>`;
@@ -1269,7 +1269,9 @@ async function fetchDashboardSnapshot(){
     if(fwd){
       $("ensMean").textContent=fwd.predicted_bracket||"—";
       const sim=fwd.simulated_trade||{};
-      $("ensSrc").textContent=`${fwd.timestep||"1h"} · ask ${(Number(sim.ask||0)*100).toFixed(1)}¢`;
+      const probSource=fwd.probability_source||"unknown";
+      const probFlag=fwd.probabilistic?"prob":"fallback";
+      $("ensSrc").textContent=`${fwd.timestep||"1h"} · ${probFlag} · ask ${(Number(sim.ask||0)*100).toFixed(1)}¢`;
       $("curT").textContent="Tomorrow.io";
       $("curTs").textContent=fwd.as_of_utc?`as of ${String(fwd.as_of_utc).substring(11,16)} UTC`:"live";
       const maxVal=Number(fwd.max_temp_market);
@@ -1278,7 +1280,10 @@ async function fetchDashboardSnapshot(){
       }else{
         $("dH").textContent="—";
       }
-      $("dHs").textContent=`Predicted daily max (${fwd.timestep||"1h"})`;
+      $("dHs").textContent=`Predicted daily max (${fwd.timestep||"1h"}, ${probSource})`;
+      $("biasWarn").innerHTML=fwd.probabilistic
+        ?`<b>Forward Test</b>: Tomorrow.io probabilistic fields (${probSource}) + live CLOB books. v5 filters/orders are disabled.`
+        :`<b>Forward Test</b>: Tomorrow.io point forecast (${probSource}) + calibrated uncertainty fallback + live CLOB books. v5 filters/orders are disabled.`;
       metarTemp=null;metarHigh=null;metarDayMax=null;
     }else{
       $("ensMean").textContent=ensCount?ensMean.toFixed(1)+unitLabel():"—";

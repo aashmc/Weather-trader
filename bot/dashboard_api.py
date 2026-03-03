@@ -117,9 +117,13 @@ def build_summary() -> dict:
     ctrl = _load_control()
     portfolio = get_portfolio_summary()
     active, active_by_market = _active_positions_payload()
-    cash = _fetch_cash_balance_sync()
-    if cash >= 0:
+    if config.STRATEGY_ENGINE == "forward_test_tomorrow":
+        cash = float(config.FORWARD_TEST_PAPER_BANKROLL)
         config.update_bankroll(cash)
+    else:
+        cash = _fetch_cash_balance_sync()
+        if cash >= 0:
+            config.update_bankroll(cash)
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "strategy_engine": config.STRATEGY_ENGINE,
@@ -377,7 +381,7 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
                 max_temp_market_out = nyc_prob_engine.get("expected_max_f")
                 ensemble_mean_out = float(max_temp_market_out or ensemble_mean_out)
                 ensemble_count_out = int(nyc_prob_engine.get("source_count") or 0)
-                probability_source_out = "nyc_prob_engine"
+                probability_source_out = "nyc_3model_prob_engine"
                 probabilistic_out = True
                 conditioning_source = "nyc_prob_engine"
                 calibration_meta = {

@@ -1072,7 +1072,7 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
                 forecast_max_for_snapshot = float(
                     nyc_prob.get("expected_max_f") or forecast_max_for_snapshot
                 )
-                probability_source_for_snapshot = "nyc_prob_engine"
+                probability_source_for_snapshot = "nyc_3model_prob_engine"
                 probabilistic_for_snapshot = True
                 calibration_meta = {
                     "used": bool(nyc_cal_meta.get("used", False)),
@@ -1114,7 +1114,7 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
         )
 
         log.info(
-            "%s %s: Tomorrow max %.1f%s -> %s (p=%s) | action=%s ask=%.3f spread=%.3f",
+            "%s %s: model max %.1f%s -> %s (p=%s) | action=%s ask=%.3f spread=%.3f",
             city_name,
             date_str,
             float(forecast["max_temp_market"]),
@@ -1785,24 +1785,34 @@ async def run_cycle():
         log.warning("Kill switch active — skipping trading cycle")
         return
 
-    # Fetch live wallet balance and update limits
-    balance = await fetch_wallet_balance()
-    if balance > 0:
+    # Fetch bankroll and update limits.
+    if forward_mode:
+        balance = float(config.FORWARD_TEST_PAPER_BANKROLL)
         update_bankroll(balance)
         log.info(
-            f"💰 Bankroll: ${config.BANKROLL:.2f} | "
+            f"🧪 Paper bankroll: ${config.BANKROLL:.2f} | "
             f"Max bet: ${config.MAX_BET_PER_BRACKET:.2f} | "
             f"Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f} | "
             f"Kill: ${config.DAILY_LOSS_LIMIT:.2f}"
         )
-    elif balance == 0:
-        update_bankroll(0)
-        log.warning("Wallet balance is $0 — no trades this cycle")
     else:
-        log.warning("Balance fetch failed — skipping trades this cycle (bankroll $0)")
-        if not forward_mode and config.BANKROLL <= 0:
-            # Don't trade on stale/missing data
-            return
+        balance = await fetch_wallet_balance()
+        if balance > 0:
+            update_bankroll(balance)
+            log.info(
+                f"💰 Bankroll: ${config.BANKROLL:.2f} | "
+                f"Max bet: ${config.MAX_BET_PER_BRACKET:.2f} | "
+                f"Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f} | "
+                f"Kill: ${config.DAILY_LOSS_LIMIT:.2f}"
+            )
+        elif balance == 0:
+            update_bankroll(0)
+            log.warning("Wallet balance is $0 — no trades this cycle")
+        else:
+            log.warning("Balance fetch failed — skipping trades this cycle (bankroll $0)")
+            if config.BANKROLL <= 0:
+                # Don't trade on stale/missing data
+                return
 
     dates = get_market_dates()
     city_summaries = []
@@ -1899,22 +1909,26 @@ async def main():
     log.info("  WEATHER TRADER BOT — STARTING")
     log.info("=" * 60)
 
-    # Fetch initial wallet balance
-    balance = await fetch_wallet_balance()
-    if balance > 0:
-        update_bankroll(balance)
-        bankroll_str = f"${config.BANKROLL:.2f}"
-    elif balance == 0:
-        bankroll_str = "⚠️ $0.00 (empty wallet)"
+    # Fetch initial bankroll.
+    if forward_mode:
+        update_bankroll(float(config.FORWARD_TEST_PAPER_BANKROLL))
+        bankroll_str = f"${config.BANKROLL:.2f} (paper)"
     else:
-        bankroll_str = "⚠️ FETCH FAILED (no trades until resolved)"
+        balance = await fetch_wallet_balance()
+        if balance > 0:
+            update_bankroll(balance)
+            bankroll_str = f"${config.BANKROLL:.2f}"
+        elif balance == 0:
+            bankroll_str = "⚠️ $0.00 (empty wallet)"
+        else:
+            bankroll_str = "⚠️ FETCH FAILED (no trades until resolved)"
 
     log.info(f"  Mode: {mode}")
     if forward_mode:
         log.info(f"  Bankroll: {bankroll_str} | Forward test only (no live orders)")
         log.info(
-            f"  Strategy: Tomorrow.io forward test "
-            f"({config.TOMORROW_TIMESTEP} data, re-enter on bracket change={config.FORWARD_TEST_REENTER_ON_BRACKET_CHANGE})"
+            f"  Strategy: NYC 3-model forward test (NBM + GEFS ENS + ECMWF ENS) "
+            f"({config.TOMORROW_TIMESTEP} cadence, re-enter on bracket change={config.FORWARD_TEST_REENTER_ON_BRACKET_CHANGE})"
         )
     else:
         log.info(f"  Bankroll: {bankroll_str} | Kelly: full × conc | Max exposure: ${config.MAX_TOTAL_EXPOSURE:.2f}")
@@ -1930,7 +1944,8 @@ async def main():
         await send_telegram(
             f"🚀 <b>Weather Trader Bot Forward Test Started</b>\n"
             f"  Mode: {mode}\n"
-            f"  Strategy: Tomorrow.io ({config.TOMORROW_TIMESTEP}) + order-book snapshots\n"
+            f"  Strategy: NYC 3-model (NBM + GEFS ENS + ECMWF ENS) + order-book snapshots\n"
+            f"  Paper bankroll: ${config.BANKROLL:.2f}\n"
             f"  Sim behavior: re-enter on bracket change = {config.FORWARD_TEST_REENTER_ON_BRACKET_CHANGE}\n"
             f"  Monitoring: {', '.join(c['name'] for c in CITIES.values())}\n"
             f"  Cycle: every {CYCLE_INTERVAL_SECONDS // 60} min | Poll: every {TELEGRAM_POLL_SECONDS}s\n"

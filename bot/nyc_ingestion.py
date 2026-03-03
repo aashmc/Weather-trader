@@ -186,6 +186,68 @@ def _summarize_hourly(
     }
 
 
+def _member_max_distribution_f(
+    *,
+    payload: dict,
+    date_str: str,
+    tz_name: str,
+) -> tuple[dict[str, float], int]:
+    """
+    Build max-temperature distribution in °F from member series.
+    Returns ({deg_f_str: prob}, member_count_used).
+    """
+    hourly = payload.get("hourly", {}) or {}
+    times = list(hourly.get("time", []) or [])
+    if not times:
+        return {}, 0
+    tz = ZoneInfo(tz_name)
+    target_idx = []
+    for i, ts in enumerate(times):
+        dt_local = _parse_dt_local(ts, tz)
+        if dt_local is None:
+            continue
+        if dt_local.date().isoformat() == date_str:
+            target_idx.append(i)
+    if not target_idx:
+        return {}, 0
+
+    member_keys = sorted(
+        k for k in hourly.keys() if str(k).startswith("temperature_2m_member")
+    )
+    if not member_keys:
+        return {}, 0
+
+    counts: dict[int, int] = {}
+    used = 0
+    for mk in member_keys:
+        vals = list(hourly.get(mk, []) or [])
+        if len(vals) != len(times):
+            continue
+        member_vals = []
+        for idx in target_idx:
+            v = _safe_float(vals[idx])
+            if v is not None:
+                member_vals.append(v)
+        if not member_vals:
+            continue
+        max_f = _to_f(max(member_vals))
+        deg = int(round(max_f))
+        counts[deg] = counts.get(deg, 0) + 1
+        used += 1
+
+    if used <= 0:
+        return {}, 0
+    dist = {str(k): (v / used) for k, v in sorted(counts.items())}
+    return dist, used
+
+
+def _point_max_distribution_f(summary: dict) -> tuple[dict[str, float], int]:
+    max_temp_f = _safe_float(summary.get("max_temp_f"))
+    if max_temp_f is None:
+        return {}, 0
+    return {str(int(round(max_temp_f))): 1.0}, 1
+
+
 async def _fetch_source(city: dict, date_str: str, source_name: str, model_id: str) -> dict:
     started_at = datetime.now(timezone.utc)
     if not model_id:
@@ -220,6 +282,17 @@ async def _fetch_source(city: dict, date_str: str, source_name: str, model_id: s
             date_str=date_str,
             tz_name=city["tz"],
         )
+        if source_name in ("gefs", "ecmwf_ens"):
+            max_temp_dist_f, dist_members = _member_max_distribution_f(
+                payload=payload,
+                date_str=date_str,
+                tz_name=city["tz"],
+            )
+            if not max_temp_dist_f:
+                max_temp_dist_f, dist_members = _point_max_distribution_f(summary)
+        else:
+            max_temp_dist_f, dist_members = _point_max_distribution_f(summary)
+
         return {
             "status": "ok",
             "source": source_name,
@@ -228,6 +301,8 @@ async def _fetch_source(city: dict, date_str: str, source_name: str, model_id: s
             "run_time_utc": _extract_run_time_utc(payload),
             "generationtime_ms": _safe_float(payload.get("generationtime_ms")),
             "as_of_utc": started_at.isoformat(),
+            "max_temp_dist_f": max_temp_dist_f,
+            "dist_members": int(dist_members),
             **summary,
         }
     except Exception as exc:
@@ -249,7 +324,7 @@ async def capture_nyc_ingestion(date_str: str) -> dict:
     now = datetime.now(timezone.utc)
 
     sources = {}
-    source_order = ("nbm", "hrrr", "gefs", "ecmwf_ens")
+    source_order = tuple(config.NYC_INGESTION_ACTIVE_SOURCES)
     tasks = []
     for src in source_order:
         model_id = (config.NYC_INGESTION_MODELS.get(src) or "").strip()

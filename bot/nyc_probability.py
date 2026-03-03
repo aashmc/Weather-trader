@@ -2,7 +2,7 @@
 NYC probabilistic model from multi-source daily-max forecasts.
 
 Forward-test scope:
-- Uses NYC ingestion source max forecasts (NBM/HRRR/GEFS/ECMWF ENS)
+- Uses NYC ingestion source max forecasts (NBM/GEFS/ECMWF ENS)
 - Builds a weighted mixture distribution over final daily max (°F)
 - Applies observed-high floor from METAR (if available)
 """
@@ -28,10 +28,45 @@ def _norm_cdf(x: float, mu: float, sigma: float) -> float:
     return 0.5 * (1.0 + math.erf(z))
 
 
+def _normalize_degree_dist(raw_dist: dict) -> dict[int, float]:
+    clean = {}
+    for k, v in (raw_dist or {}).items():
+        try:
+            deg = int(k)
+            p = float(v)
+        except (TypeError, ValueError):
+            continue
+        if p <= 0:
+            continue
+        clean[deg] = clean.get(deg, 0.0) + p
+    total = sum(clean.values())
+    if total <= 0:
+        return {}
+    return {k: v / total for k, v in sorted(clean.items())}
+
+
+def _gaussian_degree_dist(mean_f: float, sigma_f: float) -> dict[int, float]:
+    lo = int(math.floor(mean_f - 12.0))
+    hi = int(math.ceil(mean_f + 12.0))
+    out = {}
+    for deg in range(lo, hi + 1):
+        a = deg - 0.5
+        b = deg + 0.5
+        p = max(0.0, _norm_cdf(b, mean_f, sigma_f) - _norm_cdf(a, mean_f, sigma_f))
+        if p > 0:
+            out[deg] = p
+    total = sum(out.values())
+    if total <= 0:
+        return {}
+    return {k: v / total for k, v in out.items()}
+
+
 def _available_sources(ingestion: dict) -> list[dict]:
     rows = []
     src_map = (ingestion or {}).get("sources") or {}
-    for name, src in src_map.items():
+    source_order = list(config.NYC_INGESTION_ACTIVE_SOURCES) or list(src_map.keys())
+    for name in source_order:
+        src = src_map.get(name) or {}
         if str(src.get("status", "")).lower() != "ok":
             continue
         m = _safe_float(src.get("max_temp_f"))
@@ -41,12 +76,17 @@ def _available_sources(ingestion: dict) -> list[dict]:
         if w <= 0:
             continue
         sigma = float(config.NYC_PROB_SIGMA_F.get(name, 1.5))
+        dist_f = _normalize_degree_dist(src.get("max_temp_dist_f") or {})
+        if not dist_f:
+            dist_f = _gaussian_degree_dist(float(m), max(0.05, sigma))
         rows.append(
             {
                 "name": str(name),
                 "mean_f": float(m),
                 "weight": w,
                 "sigma_f": max(0.05, sigma),
+                "dist_f": dist_f,
+                "dist_member_count": int(src.get("dist_members", 0) or 0),
                 "as_of_utc": src.get("as_of_utc"),
             }
         )
@@ -70,27 +110,17 @@ def _normalize_weights(rows: list[dict]) -> list[dict]:
 def _degree_distribution(rows: list[dict]) -> dict[int, float]:
     if not rows:
         return {}
-    lows = [int(math.floor(r["mean_f"] - 12.0)) for r in rows]
-    highs = [int(math.ceil(r["mean_f"] + 12.0)) for r in rows]
-    lo, hi = min(lows), max(highs)
-
     out = {}
-    for deg in range(lo, hi + 1):
-        p = 0.0
-        a = deg - 0.5
-        b = deg + 0.5
-        for r in rows:
-            w = float(r["weight"])
-            mu = float(r["mean_f"])
-            sigma = float(r["sigma_f"])
-            p += w * max(0.0, _norm_cdf(b, mu, sigma) - _norm_cdf(a, mu, sigma))
-        if p > 0:
-            out[deg] = p
+    for r in rows:
+        w = float(r["weight"])
+        src_dist = r.get("dist_f") or {}
+        for deg, p in src_dist.items():
+            out[int(deg)] = out.get(int(deg), 0.0) + (w * float(p))
 
     s = sum(out.values())
     if s <= 0:
         return {}
-    return {k: v / s for k, v in out.items()}
+    return {k: v / s for k, v in sorted(out.items())}
 
 
 def _apply_observed_floor(dist: dict[int, float], observed_high_f: float | None) -> tuple[dict[int, float], int | None]:
@@ -173,4 +203,3 @@ def build_nyc_probability_snapshot(
         "expected_max_f": round(expected, 3),
         "observed_floor_f": floor_deg,
     }
-

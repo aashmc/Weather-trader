@@ -444,7 +444,7 @@ tbody tr:nth-child(even) td{background:#fbfdfc}
       <section class="panel" style="padding:12px">
         <div class="stats">
           <div class="st"><div class="st-l">Forecast Source</div><div class="st-v" id="curT">—</div><div class="st-s" id="curTs">—</div></div>
-          <div class="st"><div class="st-l">Tomorrow Max</div><div class="st-v" id="dH">—</div><div class="st-s" id="dHs">—</div></div>
+          <div class="st"><div class="st-l">Model Max</div><div class="st-v" id="dH">—</div><div class="st-s" id="dHs">—</div></div>
           <div class="st"><div class="st-l">Predicted Bracket</div><div class="st-v" id="ensMean">—</div><div class="st-s" id="ensSrc">loading...</div></div>
           <div class="st"><div class="st-l">Execution</div><div class="st-v">SIM</div><div class="st-s">forward test only</div></div>
         </div>
@@ -567,7 +567,7 @@ const CITIES={
 // ══════════════════════════════════════════════════════════
 // STATE
 // ══════════════════════════════════════════════════════════
-let CITY=CITIES.london; // active city
+let CITY=CITIES.nyc; // active city
 let B=[]; // bracket labels — populated dynamically from Polymarket
 let TOKENS={};
 const KELLY_FRAC=0.30,RS=60;
@@ -633,6 +633,7 @@ let RUNTIME_EFFECTIVE={};
 let API_CONNECTED=false;
 window._forwardMode=false;
 window._forwardPredictedBracket=null;
+window._forwardProbSource="";
 
 function uniq(arr){return [...new Set(arr.filter(Boolean))]}
 function escAttr(v){return String(v??"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
@@ -731,6 +732,24 @@ function cityDisplayName(key){
   return key;
 }
 
+function enabledCityKeys(){
+  const keys=(RUNTIME_EFFECTIVE?.enabled_cities||[]).map(x=>String(x||"").toLowerCase()).filter(Boolean);
+  return keys.length?keys:Object.keys(CITIES);
+}
+
+function enabledCityEntries(){
+  const keys=enabledCityKeys();
+  return keys.filter(k=>CITIES[k]).map(k=>[k,CITIES[k]]);
+}
+
+function forwardSourceLabel(raw){
+  const s=String(raw||"").toLowerCase();
+  if(s==="nyc_3model_prob_engine"||s==="nyc_prob_engine")return "NYC 3-model";
+  if(s.includes("tomorrow"))return "Tomorrow.io";
+  if(!s)return "forward";
+  return raw;
+}
+
 function activeBracketSetForCurrentMarket(){
   const k=`${cityDisplayName(CITY.name)}:${ACTIVE_DATE.dateStr}`;
   return new Set(ACTIVE_MARKET_BRACKETS[k]||[]);
@@ -819,11 +838,17 @@ async function refreshSummary(manual=false){
       const s=await apiGet("/api/summary");
       localStorage.setItem("wt_api_base",API_BASE);
       localStorage.setItem("wt_last_summary",JSON.stringify(s));
-    ACTIVE_MARKET_BRACKETS=s.active_by_market||{};
-    RUNTIME_EFFECTIVE=s.runtime_effective||{};
-    updateTopChips(s);
-    fillConfigInputs(RUNTIME_EFFECTIVE);
-    updateActivePositionNotice();
+      ACTIVE_MARKET_BRACKETS=s.active_by_market||{};
+      RUNTIME_EFFECTIVE=s.runtime_effective||{};
+      updateTopChips(s);
+      renderCityNav();
+      const enabled=enabledCityKeys();
+      if(enabled.length&&CITY&&!enabled.includes(CITY.polyCity)){
+        const next=enabled.find(k=>CITIES[k]);
+        if(next){selectCity(next);return;}
+      }
+      fillConfigInputs(RUNTIME_EFFECTIVE);
+      updateActivePositionNotice();
     if(B.length&&Object.keys(prices).length)render();
     setApiConnected(true);
       if(manual)setApiMsg(`Connected to live bot API (${API_BASE}).`);
@@ -1030,6 +1055,7 @@ function isImpossibleAfterObservedHigh(label,observedHigh){
 // CITY SWITCHING
 // ══════════════════════════════════════════════════════════
 function selectCity(key){
+  if(!CITIES[key])return;
   CITY=CITIES[key];
   // Reset all state
   B=[];TOKENS={};prices={};books={};rawProbs={};corrProbs={};
@@ -1048,10 +1074,14 @@ function selectCity(key){
   $("curTs").textContent="station "+CITY.icao;
   $("curT").textContent="—";$("dH").textContent="—";$("ensMean").textContent="—";
   // Forward-test banner
-  $("biasWarn").innerHTML=`<b>Forward Test</b>: Tomorrow.io ${CITY.tz} forecast + live CLOB books. Probabilistic fields are used when available; otherwise calibrated fallback is used. v5 filters/orders are disabled.`;
+  if(CITY.polyCity==="nyc"){
+    $("biasWarn").innerHTML=`<b>Forward Test</b>: NYC 3-model probability engine (NBM + GEFS ENS + ECMWF ENS) with observed-high floor + live CLOB books.`;
+  }else{
+    $("biasWarn").innerHTML=`<b>Forward Test</b>: ${CITY.tz} forecast + live CLOB books.`;
+  }
   $("biasWarn").style.display="";
   // Update footer
-  $("footer").innerHTML=`Forward test mode · Forecast source: Tomorrow.io · Resolution reference: <a href="${CITY.wunderground}" target="_blank">Wunderground ${CITY.icao}</a>`;
+  $("footer").innerHTML=`Forward test mode · Forecast source: ${CITY.polyCity==="nyc"?"NYC 3-model engine":"forward"} · Resolution reference: <a href="${CITY.wunderground}" target="_blank">Wunderground ${CITY.icao}</a>`;
   // Re-initialize dates for this city
   ACTIVE_DATE=buildDateConfig(new Date().toISOString().split("T")[0]);
   ALL_DATES=generateDates().map(buildDateConfig);
@@ -1063,7 +1093,7 @@ function selectCity(key){
 }
 
 function renderCityNav(){
-  $("cityNav").innerHTML=Object.entries(CITIES).map(([key,c])=>{
+  $("cityNav").innerHTML=enabledCityEntries().map(([key,c])=>{
     const active=c.icao===CITY.icao?"active":"";
     return`<div class="sb-item ${active}" onclick="selectCity('${key}')">
       <span class="sb-flag">${c.flag}</span>
@@ -1266,13 +1296,14 @@ async function fetchDashboardSnapshot(){
     const fwd=snap.forward_test||null;
     window._forwardMode=!!fwd;
     window._forwardPredictedBracket=fwd?.predicted_bracket||null;
+    window._forwardProbSource=fwd?.probability_source||"";
     if(fwd){
       $("ensMean").textContent=fwd.predicted_bracket||"—";
       const sim=fwd.simulated_trade||{};
       const probSource=fwd.probability_source||"unknown";
       const probFlag=fwd.probabilistic?"prob":"fallback";
       $("ensSrc").textContent=`${fwd.timestep||"1h"} · ${probFlag} · ask ${(Number(sim.ask||0)*100).toFixed(1)}¢`;
-      $("curT").textContent="Tomorrow.io";
+      $("curT").textContent=forwardSourceLabel(probSource);
       $("curTs").textContent=fwd.as_of_utc?`as of ${String(fwd.as_of_utc).substring(11,16)} UTC`:"live";
       const maxVal=Number(fwd.max_temp_market);
       if(Number.isFinite(maxVal)){
@@ -1281,9 +1312,13 @@ async function fetchDashboardSnapshot(){
         $("dH").textContent="—";
       }
       $("dHs").textContent=`Predicted daily max (${fwd.timestep||"1h"}, ${probSource})`;
-      $("biasWarn").innerHTML=fwd.probabilistic
-        ?`<b>Forward Test</b>: Tomorrow.io probabilistic fields (${probSource}) + live CLOB books. v5 filters/orders are disabled.`
-        :`<b>Forward Test</b>: Tomorrow.io point forecast (${probSource}) + calibrated uncertainty fallback + live CLOB books. v5 filters/orders are disabled.`;
+      if(String(probSource).toLowerCase().includes("nyc_3model")||String(probSource).toLowerCase().includes("nyc_prob_engine")){
+        $("biasWarn").innerHTML=`<b>Forward Test</b>: NYC 3-model probabilities (NBM + GEFS ENS + ECMWF ENS) + observed-high floor + live CLOB books.`;
+      }else{
+        $("biasWarn").innerHTML=fwd.probabilistic
+          ?`<b>Forward Test</b>: Probabilistic feed (${probSource}) + live CLOB books.`
+          :`<b>Forward Test</b>: Point forecast (${probSource}) + calibrated fallback + live CLOB books.`;
+      }
       metarTemp=null;metarHigh=null;metarDayMax=null;
     }else{
       $("ensMean").textContent=ensCount?ensMean.toFixed(1)+unitLabel():"—";
@@ -1455,7 +1490,7 @@ function render(){
     $("sigT").textContent="BUY (strict filters passed)";
     $("sigN").textContent=best.bracket;
     const totalModels=CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0);
-    const modelValue=isForward?"Tomorrow.io":`${best.modelVotes}/${totalModels}`;
+    const modelValue=isForward?forwardSourceLabel(window._forwardProbSource):`${best.modelVotes}/${totalModels}`;
     $("sigD").innerHTML=[
       ["Corrected",(best.corP*100).toFixed(1)+"%","var(--gn)"],
       ["Ask",(best.ask*100).toFixed(1)+"¢","var(--tx)"],
@@ -1505,7 +1540,7 @@ function render(){
     const totalModels=CITY.ensembleModels.split(",").length+(CITY.syntheticModel?1:0);
     const mvPct=!isForward&&totalModels>0?a.modelVotes/totalModels:0;
     const mvC=isForward?"var(--dm)":(mvPct>=0.75?"var(--gn)":mvPct>=0.5?"var(--am)":"var(--rd)");
-    const modelCell=isForward?"Tomorrow.io":`${a.modelVotes}/${totalModels}`;
+    const modelCell=isForward?forwardSourceLabel(window._forwardProbSource):`${a.modelVotes}/${totalModels}`;
     const ft=isF&&a.filterReasons?` title="${escAttr(a.filterReasons.join("; "))}"`:"";
     const isMktFav=maxMktP>0&&Math.abs((a.mktP||0)-maxMktP)<1e-9;
     h+=`<tr class="${hl?"rh":""} ${a.isActive?"pos-w":""}"${ft}><td>${a.bracket}</td>
@@ -1612,7 +1647,7 @@ updateActivePositionNotice();
 refreshSummary(false);
 refreshLiveLogs();
 renderCityNav();
-selectCity("london"); // default
+selectCity("nyc"); // default
 setInterval(()=>{cd--;$("badge").textContent="Auto-refresh "+cd+"s";updateCityClock();if(cd<=0)refresh()},1000);
 setInterval(()=>refreshSummary(false),15000);
 setInterval(()=>refreshLiveLogs(),10000);

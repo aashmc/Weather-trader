@@ -34,7 +34,7 @@ STRATEGY_ENGINE = os.getenv("STRATEGY_ENGINE", "forward_test_tomorrow").strip().
 # ══════════════════════════════════════════════════════
 # TRADING PARAMETERS
 # ══════════════════════════════════════════════════════
-BANKROLL_FALLBACK = 0.0                # If wallet query fails, don't trade
+BANKROLL_FALLBACK = float(os.getenv("BANKROLL_FALLBACK", "0.0"))  # If wallet query fails, don't trade
 KELLY_FRACTION = 1.0           # Full Kelly (before concentration scaling)
 KELLY_CAP = 0.75               # Max Kelly multiplier after concentration scaling
 
@@ -84,6 +84,9 @@ TELEGRAM_POLL_SECONDS = 60     # Fast polling for button presses
 MARKET_LOOKAHEAD_DAYS = max(1, int(os.getenv("MARKET_LOOKAHEAD_DAYS", "3")))
 
 # Forward-test simulation settings
+FORWARD_TEST_PAPER_BANKROLL = max(
+    0.0, float(os.getenv("FORWARD_TEST_PAPER_BANKROLL", "500"))
+)
 FORWARD_TEST_SIM_SIZE = max(1, int(os.getenv("FORWARD_TEST_SIM_SIZE", "1")))
 FORWARD_TEST_REENTER_ON_BRACKET_CHANGE = os.getenv(
     "FORWARD_TEST_REENTER_ON_BRACKET_CHANGE", "true"
@@ -183,6 +186,13 @@ NYC_INGESTION_MODELS = {
     "gefs": os.getenv("NYC_MODEL_GEFS", "ncep_gefs025").strip(),
     "ecmwf_ens": os.getenv("NYC_MODEL_ECMWF_ENS", "ecmwf_ifs025_ensemble").strip(),
 }
+NYC_INGESTION_ACTIVE_SOURCES = [
+    x.strip().lower()
+    for x in os.getenv("NYC_INGESTION_ACTIVE_SOURCES", "nbm,gefs,ecmwf_ens").split(",")
+    if x.strip()
+]
+if not NYC_INGESTION_ACTIVE_SOURCES:
+    NYC_INGESTION_ACTIVE_SOURCES = ["nbm", "gefs", "ecmwf_ens"]
 
 # NYC quant probability engine (forward-test only).
 NYC_PROB_ENGINE_ENABLED = os.getenv(
@@ -192,16 +202,24 @@ NYC_PROB_USE_IN_FORWARD = os.getenv(
     "NYC_PROB_USE_IN_FORWARD", "true"
 ).strip().lower() in ("1", "true", "yes", "on")
 NYC_PROB_WEIGHTS = {
-    "nbm": 0.35,
-    "hrrr": 0.20,
-    "gefs": 0.20,
-    "ecmwf_ens": 0.25,
+    "nbm": max(0.0, float(os.getenv("NYC_WEIGHT_NBM", "0.3334"))),
+    "hrrr": max(0.0, float(os.getenv("NYC_WEIGHT_HRRR", "0.0"))),
+    "gefs": max(0.0, float(os.getenv("NYC_WEIGHT_GEFS", "0.3333"))),
+    "ecmwf_ens": max(0.0, float(os.getenv("NYC_WEIGHT_ECMWF_ENS", "0.3333"))),
 }
 NYC_PROB_SIGMA_F = {
     "nbm": 1.20,
     "hrrr": 1.60,
     "gefs": 1.45,
     "ecmwf_ens": 1.35,
+}
+# Keep probability settings aligned to active NYC ingestion sources.
+_nyc_active_src = set(NYC_INGESTION_ACTIVE_SOURCES)
+NYC_PROB_WEIGHTS = {
+    k: v for k, v in NYC_PROB_WEIGHTS.items() if k in _nyc_active_src
+}
+NYC_PROB_SIGMA_F = {
+    k: v for k, v in NYC_PROB_SIGMA_F.items() if k in _nyc_active_src
 }
 
 # NYC forward execution policy (shadow/live-decision guardrails).
@@ -442,7 +460,7 @@ CITIES = {
 # Optional city scope for targeted forward tests (e.g., "nyc").
 _ENABLED_CITIES = [
     x.strip().lower()
-    for x in os.getenv("ENABLED_CITIES", "").split(",")
+    for x in os.getenv("ENABLED_CITIES", "nyc").split(",")
     if x.strip()
 ]
 if _ENABLED_CITIES:
@@ -657,11 +675,13 @@ def get_runtime_effective() -> dict:
         "nyc_ingestion_forecast_api": NYC_INGESTION_FORECAST_API,
         "nyc_ingestion_ensemble_api": NYC_INGESTION_ENSEMBLE_API,
         "nyc_ingestion_forecast_days": NYC_INGESTION_FORECAST_DAYS,
+        "nyc_ingestion_active_sources": list(NYC_INGESTION_ACTIVE_SOURCES),
         "nyc_ingestion_models": dict(NYC_INGESTION_MODELS),
         "nyc_prob_engine_enabled": NYC_PROB_ENGINE_ENABLED,
         "nyc_prob_use_in_forward": NYC_PROB_USE_IN_FORWARD,
         "nyc_prob_weights": dict(NYC_PROB_WEIGHTS),
         "nyc_prob_sigma_f": dict(NYC_PROB_SIGMA_F),
+        "forward_test_paper_bankroll": FORWARD_TEST_PAPER_BANKROLL,
         "nyc_forward_policy_enabled": NYC_FORWARD_POLICY_ENABLED,
         "nyc_forward_min_model_prob": NYC_FORWARD_MIN_MODEL_PROB,
         "nyc_forward_min_edge": NYC_FORWARD_MIN_EDGE,

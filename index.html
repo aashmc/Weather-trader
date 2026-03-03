@@ -172,6 +172,42 @@ body{
 }
 .st-v{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700}
 .st-s{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);margin-top:4px}
+.pos-meta{
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;
+  color:var(--muted);
+  margin-bottom:6px;
+}
+.pos-list{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  max-height:220px;
+  overflow:auto;
+}
+.pos-row{
+  border:1px solid var(--line);
+  background:var(--surface-soft);
+  border-radius:10px;
+  padding:8px 9px;
+}
+.pos-main{
+  font-family:'JetBrains Mono',monospace;
+  font-size:12px;
+  color:var(--tx);
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+}
+.pos-sub{
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;
+  color:var(--muted);
+  margin-top:4px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
 .dtabs{display:flex;gap:7px;overflow-x:auto;padding-bottom:2px}
 .dtab{
   border:1px solid var(--line);
@@ -450,6 +486,12 @@ tbody tr:nth-child(even) td{background:#fbfdfc}
         </div>
       </section>
 
+      <section class="panel" style="padding:12px">
+        <div class="pt">Live Positions</div>
+        <div class="pos-meta" id="livePosMeta">loading...</div>
+        <div class="pos-list" id="livePosList"></div>
+      </section>
+
       <div class="split-panels">
         <div class="pn" id="histPanel" style="display:none">
           <div class="pt" id="histTitle">Distribution: Raw → Corrected → Market</div>
@@ -631,6 +673,7 @@ let ACTIVE_MARKET_BRACKETS={};
 let BOT_PAUSED=false;
 let RUNTIME_EFFECTIVE={};
 let API_CONNECTED=false;
+let LIVE_POSITIONS=[];
 window._forwardMode=false;
 window._forwardPredictedBracket=null;
 window._forwardProbSource="";
@@ -685,6 +728,8 @@ function updateTopChips(summary){
   $("chipMode").innerHTML=`Mode: <b>${mode}${BOT_PAUSED?" · paused":""}</b>`;
   $("chipMode").className=`chip ${BOT_PAUSED?"chip-pause":"chip-live"}`;
   setBotSwitchUi(BOT_PAUSED);
+  LIVE_POSITIONS=Array.isArray(summary?.active_positions)?summary.active_positions:[];
+  renderLivePositions();
 }
 
 function setApiConnected(ok){
@@ -717,9 +762,11 @@ function loadCachedSummary(){
     const s=JSON.parse(raw);
     ACTIVE_MARKET_BRACKETS=s.active_by_market||{};
     RUNTIME_EFFECTIVE=s.runtime_effective||{};
+    LIVE_POSITIONS=Array.isArray(s?.active_positions)?s.active_positions:[];
     updateTopChips(s);
     fillConfigInputs(RUNTIME_EFFECTIVE);
     updateActivePositionNotice();
+    renderLivePositions();
     setApiMsg("Showing last known live values. API offline right now.",true);
     return true;
   }catch(e){
@@ -765,6 +812,37 @@ function updateActivePositionNotice(){
   }
   el.style.display="block";
   el.innerHTML=`Active in this market: <b>${list.join(", ")}</b>. Duplicate BUY on same bracket is blocked.`;
+}
+
+function renderLivePositions(){
+  const listEl=$("livePosList"),metaEl=$("livePosMeta");
+  if(!listEl||!metaEl)return;
+  const all=Array.isArray(LIVE_POSITIONS)?LIVE_POSITIONS:[];
+  if(!all.length){
+    metaEl.textContent="No open positions.";
+    listEl.innerHTML=`<div class="pos-row"><div class="pos-main"><span>None</span><span>—</span></div><div class="pos-sub">No active live/paper positions.</div></div>`;
+    return;
+  }
+  const cityKey=cityDisplayName(CITY.name).toUpperCase();
+  const cityRows=all.filter(p=>String(p.city||"").toUpperCase()===cityKey);
+  const rows=cityRows.length?cityRows:all;
+  metaEl.textContent=cityRows.length
+    ?`${cityRows.length} in ${CITY.name} · ${all.length} total`
+    :`${all.length} total`;
+  listEl.innerHTML=rows.map(p=>{
+    const city=escHtml(p.city||"");
+    const d=escHtml(p.market_date||"");
+    const b=escHtml(p.bracket||"");
+    const w=Number(p.wager||0);
+    const ask=Number(p.ask||0);
+    const fill=escHtml(p.fill_status||"");
+    const oid=String(p.order_id||"");
+    const shortOid=oid?`${oid.slice(0,10)}...${oid.slice(-6)}`:"n/a";
+    return `<div class="pos-row">
+      <div class="pos-main"><span>${city} ${d}</span><span>$${w.toFixed(2)}</span></div>
+      <div class="pos-sub"><span>${b}</span><span>ask ${(ask*100).toFixed(1)}¢</span><span>${fill}</span><span title="${escAttr(oid)}">${escHtml(shortOid)}</span></div>
+    </div>`;
+  }).join("");
 }
 
 function authHeaders(){
@@ -1069,6 +1147,7 @@ function selectCity(key){
   $("ensSrc").textContent="loading...";
   // Update UI
   renderCityNav();
+  renderLivePositions();
   $("hdrTitle").innerHTML=CITY.name+" High Temp <span></span>";
   $("stationInfo").textContent=CITY.icao+" "+CITY.lat.toFixed(3)+"°N "+Math.abs(CITY.lon).toFixed(3)+"°"+(CITY.lon>=0?"E":"W");
   $("curTs").textContent="station "+CITY.icao;

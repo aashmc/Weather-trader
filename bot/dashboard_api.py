@@ -29,6 +29,15 @@ from tomorrow_quality import (
     get_lead_bucket as get_forward_lead_bucket,
     apply_error_calibration as apply_forward_error_calibration,
 )
+from nyc_ingestion import get_latest_nyc_ingestion
+from source_health import (
+    check_books_contract,
+    check_ensemble_contract,
+    check_market_contract,
+    check_metar_contract,
+    check_tomorrow_contract,
+    aggregate_source_health,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -260,6 +269,11 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
     brackets = market.get("brackets", [])
     prices = market.get("prices", {})
     token_ids = market.get("token_ids", {})
+    nyc_ingestion = (
+        get_latest_nyc_ingestion(date_str)
+        if city_key == "nyc" and config.NYC_INGESTION_ENABLED
+        else None
+    )
 
     books_task = fetch_all_books(token_ids)
     gas_task = _fetch_gas_estimate()
@@ -329,6 +343,17 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
         pred_bid = float(pred_book.get("bb", 0.0) or 0.0)
         pred_spread = float(pred_book.get("spread", max(0.0, pred_ask - pred_bid)) or 0.0)
 
+        source_health = {}
+        if config.SOURCE_CONTRACT_CHECKS_ENABLED:
+            source_health = aggregate_source_health(
+                city_key=city_key,
+                checks={
+                    "market": check_market_contract(market),
+                    "forecast": check_tomorrow_contract(forecast),
+                    "books": check_books_contract(books_raw, token_ids),
+                },
+            )
+
         return {
             "city": city_key,
             "date": date_str,
@@ -359,6 +384,8 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
                 "latest_raw": "",
             },
             "gas": gas_data,
+            "nyc_ingestion": nyc_ingestion,
+            "source_health": source_health,
             "forward_test": {
                 "source": forecast.get("source", "tomorrow.io"),
                 "probability_source": forecast.get("probability_source", "deterministic"),
@@ -433,6 +460,21 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
     }
 
     gas_data = {"gas_usd": 0.03, "pol_usd": 0.35} if isinstance(gas_res, Exception) else gas_res
+    source_health = {}
+    if config.SOURCE_CONTRACT_CHECKS_ENABLED:
+        source_health = aggregate_source_health(
+            city_key=city_key,
+            checks={
+                "market": check_market_contract(market),
+                "ensemble": check_ensemble_contract(ensemble_data),
+                "metar": check_metar_contract(
+                    metar_data,
+                    city_tz=city["tz"],
+                    date_str=date_str,
+                ),
+                "books": check_books_contract(books_raw, token_ids),
+            },
+        )
 
     return {
         "city": city_key,
@@ -458,6 +500,8 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
         },
         "metar": metar_data,
         "gas": gas_data,
+        "nyc_ingestion": nyc_ingestion,
+        "source_health": source_health,
     }
 
 
@@ -595,6 +639,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/dashboard/markets",
             "/api/dashboard/snapshot",
             "/api/dashboard/logs",
+            "/api/nyc/ingestion",
             "/api/config",
         ):
             self._set_headers(200)
@@ -653,6 +698,15 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 },
             )
+        if path == "/api/nyc/ingestion":
+            try:
+                q = parse_qs(parsed.query)
+                date_raw = (q.get("date") or [""])[0].strip()
+                date_str = _safe_date(date_raw) if date_raw else None
+                data = get_latest_nyc_ingestion(date_str)
+                return self._json(200, {"ok": True, "data": data})
+            except Exception as e:
+                return self._json(400, {"ok": False, "error": str(e)})
         if path == "/api/config":
             config.refresh_runtime_overrides()
             return self._json(

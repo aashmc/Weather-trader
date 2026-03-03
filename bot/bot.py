@@ -65,6 +65,15 @@ from tomorrow_quality import (
     build_daily_report_message,
     mark_daily_report_sent,
 )
+from nyc_ingestion import capture_nyc_ingestion
+from source_health import (
+    check_books_contract,
+    check_ensemble_contract,
+    check_market_contract,
+    check_metar_contract,
+    check_tomorrow_contract,
+    aggregate_source_health,
+)
 
 # ══════════════════════════════════════════════════════
 # CONTROL FILE — persists bot state across restarts
@@ -630,6 +639,15 @@ async def _maybe_alert_freshness_block(city_name: str, date_str: str, reason: st
     )
 
 
+def _format_source_block_reason(source_health: dict) -> str:
+    reasons = list(source_health.get("blocking_reasons") or [])
+    if not reasons:
+        reasons = list(source_health.get("reasons") or [])
+    if not reasons:
+        return "source contract checks failed"
+    return "source contract: " + "; ".join(reasons[:5])
+
+
 def get_market_dates() -> list[str]:
     """
     Get dates to process starting from today (UTC).
@@ -718,6 +736,7 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
         "trades": 0,
         "error": None,
     }
+    source_health = {}
 
     try:
         try:
@@ -736,6 +755,7 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
                 books_snapshot={},
                 forecast={},
                 simulated_trade={},
+                source_health=source_health,
                 status="market_unavailable",
                 note=msg,
             )
@@ -745,6 +765,11 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
         if market["resolved"]:
             note = f"Already resolved → {market['winner']}"
             log.info(f"{city_name} {date_str}: {note}")
+            if config.SOURCE_CONTRACT_CHECKS_ENABLED:
+                source_health = aggregate_source_health(
+                    city_key=city_key,
+                    checks={"market": check_market_contract(market)},
+                )
             try:
                 q = await record_forward_resolution(
                     city_cfg=city,
@@ -776,6 +801,7 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
                 books_snapshot={},
                 forecast={},
                 simulated_trade={},
+                source_health=source_health,
                 status="resolved",
                 note=note,
             )
@@ -789,8 +815,71 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
             result["error"] = "no_brackets"
             return result
 
+        nyc_ingestion = None
+        if city_key == "nyc" and config.NYC_INGESTION_ENABLED:
+            try:
+                nyc_ingestion = await capture_nyc_ingestion(date_str)
+                cov = (nyc_ingestion.get("coverage") or {})
+                log.info(
+                    "NYC ingestion %s: sources ok=%s/%s err=%s",
+                    date_str,
+                    cov.get("ok_sources", 0),
+                    cov.get("total_sources", 0),
+                    cov.get("error_sources", 0),
+                )
+            except Exception as ie:
+                log.warning("NYC ingestion capture failed for %s: %s", date_str, ie)
+
         forecast = await fetch_tomorrow_daily_max(city, date_str)
+        if nyc_ingestion is not None:
+            forecast["nyc_ingestion_summary"] = {
+                "timestamp_utc": nyc_ingestion.get("timestamp_utc"),
+                "date": nyc_ingestion.get("date"),
+                "coverage": nyc_ingestion.get("coverage", {}),
+                "metar_status": (nyc_ingestion.get("metar") or {}).get("status"),
+            }
         books = await fetch_all_books(token_ids)
+
+        if config.SOURCE_CONTRACT_CHECKS_ENABLED:
+            source_health = aggregate_source_health(
+                city_key=city_key,
+                checks={
+                    "market": check_market_contract(market),
+                    "forecast": check_tomorrow_contract(forecast),
+                    "books": check_books_contract(books, token_ids),
+                },
+            )
+            if source_health.get("status") != "ok":
+                msg = "; ".join(source_health.get("reasons", [])[:6])
+                log.warning(
+                    "%s %s source health=%s strict=%s block=%s :: %s",
+                    city_name,
+                    date_str,
+                    source_health.get("status"),
+                    source_health.get("strict_city"),
+                    source_health.get("block"),
+                    msg,
+                )
+            if source_health.get("block"):
+                note = _format_source_block_reason(source_health)
+                await log_forward_cycle(
+                    city=city_name,
+                    date_str=date_str,
+                    market_slug=market.get("slug", ""),
+                    market_active=bool(market.get("active", False)),
+                    market_resolved=False,
+                    market_winner=None,
+                    prices=prices,
+                    books_snapshot=books,
+                    forecast=forecast,
+                    simulated_trade={},
+                    source_health=source_health,
+                    status="source_contract_blocked",
+                    note=note,
+                )
+                result["status"] = "source_contract_blocked"
+                result["error"] = note
+                return result
 
         lead_bucket, _lead_hours = get_forward_lead_bucket(city["tz"], date_str)
         predicted = None
@@ -876,6 +965,7 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
             books_snapshot=books,
             forecast=forecast,
             simulated_trade=sim,
+            source_health=source_health,
             status="ok",
         )
 
@@ -931,6 +1021,20 @@ async def process_city(city_key: str, city: dict, date_str: str, live_guard: dic
             log.warning(f"{city_name} {date_str}: No brackets found")
             result["error"] = "no_brackets"
             return result
+
+        if city_key == "nyc" and config.NYC_INGESTION_ENABLED:
+            try:
+                nyc_ingestion = await capture_nyc_ingestion(date_str)
+                cov = (nyc_ingestion.get("coverage") or {})
+                log.info(
+                    "NYC ingestion %s: sources ok=%s/%s err=%s",
+                    date_str,
+                    cov.get("ok_sources", 0),
+                    cov.get("total_sources", 0),
+                    cov.get("error_sources", 0),
+                )
+            except Exception as ie:
+                log.warning("NYC ingestion capture failed for %s: %s", date_str, ie)
 
         # 2. Fetch ensemble forecasts + bias correction
         ensemble = await fetch_ensemble(city, date_str)
@@ -1049,6 +1153,33 @@ async def process_city(city_key: str, city: dict, date_str: str, live_guard: dic
         signals = get_actionable_signals(analysis)
         totals = compute_totals(analysis)
 
+        source_health = {}
+        if config.SOURCE_CONTRACT_CHECKS_ENABLED:
+            source_health = aggregate_source_health(
+                city_key=city_key,
+                checks={
+                    "market": check_market_contract(market),
+                    "ensemble": check_ensemble_contract(ensemble),
+                    "metar": check_metar_contract(
+                        metar,
+                        city_tz=city["tz"],
+                        date_str=date_str,
+                    ),
+                    "books": check_books_contract(books, token_ids),
+                },
+            )
+            if source_health.get("status") != "ok":
+                msg = "; ".join(source_health.get("reasons", [])[:6])
+                log.warning(
+                    "%s %s source health=%s strict=%s block=%s :: %s",
+                    city_name,
+                    date_str,
+                    source_health.get("status"),
+                    source_health.get("strict_city"),
+                    source_health.get("block"),
+                    msg,
+                )
+
         # Log favorite and concentration
         fav = analysis.get("favorite", "?")
         conc = analysis.get("concentration", 0)
@@ -1062,6 +1193,15 @@ async def process_city(city_key: str, city: dict, date_str: str, live_guard: dic
             tradeable = False
             reason = f"quality gate: {quality_reason}"
             log.warning(f"{city_name}: Trading blocked — quality gate ({quality_reason})")
+
+        if tradeable and source_health.get("block"):
+            source_reason = _format_source_block_reason(source_health)
+            _apply_global_block_reason(analysis, source_reason)
+            signals = get_actionable_signals(analysis)
+            totals = compute_totals(analysis)
+            tradeable = False
+            reason = source_reason
+            log.warning(f"{city_name}: Trading blocked — {source_reason}")
 
         freshness_reasons = _get_freshness_reasons(city, date_str, ensemble, metar)
         if tradeable and freshness_reasons:

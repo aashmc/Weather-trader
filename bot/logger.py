@@ -33,6 +33,7 @@ async def log_forward_cycle(
     books_snapshot: dict,
     forecast: dict,
     simulated_trade: dict,
+    source_health: dict | None = None,
     status: str = "ok",
     note: str = "",
 ):
@@ -68,6 +69,9 @@ async def log_forward_cycle(
         "sim_spread": simulated_trade.get("spread"),
         "sim_contracts": simulated_trade.get("contracts", 0),
         "sim_notional": simulated_trade.get("notional", 0.0),
+        "source_health_status": (source_health or {}).get("status", ""),
+        "source_health_block": bool((source_health or {}).get("block", False)),
+        "source_health_reasons": "; ".join((source_health or {}).get("reasons", [])[:6]),
     }
     await _log_to_sheets(row)
 
@@ -97,6 +101,7 @@ async def log_forward_cycle(
         },
         "forecast": forecast,
         "simulated_trade": simulated_trade,
+        "source_health": source_health or {},
     }
     _log_to_forward_local(snapshot)
     _save_forward_snapshot(city, date_str, snapshot)

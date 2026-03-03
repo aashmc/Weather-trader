@@ -153,6 +153,33 @@ FRESHNESS_MAX_METAR_AGE_MINUTES = 120
 FRESHNESS_MAX_FORECAST_AGE_MINUTES = 180
 FRESHNESS_ALERT_COOLDOWN_SECONDS = 7200
 
+# Source contract validation (NYC-first strict rollout).
+SOURCE_CONTRACT_CHECKS_ENABLED = os.getenv(
+    "SOURCE_CONTRACT_CHECKS_ENABLED", "true"
+).strip().lower() in ("1", "true", "yes", "on")
+SOURCE_CONTRACT_STRICT_CITY_KEYS = [
+    x.strip().lower()
+    for x in os.getenv("SOURCE_CONTRACT_STRICT_CITY_KEYS", "nyc").split(",")
+    if x.strip()
+]
+
+# NYC-specific source ingestion (capture-only; no trading dependency yet).
+NYC_INGESTION_ENABLED = os.getenv(
+    "NYC_INGESTION_ENABLED", "true"
+).strip().lower() in ("1", "true", "yes", "on")
+NYC_INGESTION_FORECAST_API = os.getenv(
+    "NYC_INGESTION_FORECAST_API",
+    "https://previous-runs-api.open-meteo.com/v1/forecast",
+).strip()
+NYC_INGESTION_FORECAST_DAYS = max(1, int(os.getenv("NYC_INGESTION_FORECAST_DAYS", "3")))
+NYC_INGESTION_TIMEOUT_SECONDS = max(5, int(os.getenv("NYC_INGESTION_TIMEOUT_SECONDS", "20")))
+NYC_INGESTION_MODELS = {
+    "nbm": os.getenv("NYC_MODEL_NBM", "ncep_nbm_conus").strip(),
+    "hrrr": os.getenv("NYC_MODEL_HRRR", "hrrr").strip(),
+    "gefs": os.getenv("NYC_MODEL_GEFS", "ncep_gefs025").strip(),
+    "ecmwf_ens": os.getenv("NYC_MODEL_ECMWF_ENS", "ecmwf_ifs025_ensemble").strip(),
+}
+
 # ══════════════════════════════════════════════════════
 # ROLLING CALIBRATION (ITEM #3)
 # ══════════════════════════════════════════════════════
@@ -561,6 +588,12 @@ def get_runtime_effective() -> dict:
         "min_ask_depth": MIN_ASK_DEPTH,
         "max_ask_price": MAX_ASK_PRICE,
         "order_timeout_seconds": ORDER_TIMEOUT_SECONDS,
+        "source_contract_checks_enabled": SOURCE_CONTRACT_CHECKS_ENABLED,
+        "source_contract_strict_city_keys": list(SOURCE_CONTRACT_STRICT_CITY_KEYS),
+        "nyc_ingestion_enabled": NYC_INGESTION_ENABLED,
+        "nyc_ingestion_forecast_api": NYC_INGESTION_FORECAST_API,
+        "nyc_ingestion_forecast_days": NYC_INGESTION_FORECAST_DAYS,
+        "nyc_ingestion_models": dict(NYC_INGESTION_MODELS),
         "city_thresholds": {
             city_key: {
                 "min_models": cfg.get("min_models"),

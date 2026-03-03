@@ -30,6 +30,7 @@ from tomorrow_quality import (
     apply_error_calibration as apply_forward_error_calibration,
 )
 from nyc_ingestion import get_latest_nyc_ingestion
+from nyc_probability import build_nyc_probability_snapshot
 from source_health import (
     check_books_contract,
     check_ensemble_contract,
@@ -296,6 +297,11 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
             for label, book in (books_raw or {}).items()
         }
         gas_data = {"gas_usd": 0.03, "pol_usd": 0.35} if isinstance(gas_res, Exception) else gas_res
+        nyc_prob_engine = (
+            build_nyc_probability_snapshot(ingestion=nyc_ingestion, brackets=brackets)
+            if city_key == "nyc" and config.NYC_PROB_ENGINE_ENABLED and nyc_ingestion
+            else None
+        )
 
         dist_market_raw = forecast.get("max_dist_market") or {}
         dist_market: dict[int, float] = {}
@@ -336,6 +342,44 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
             raw_probs = {b["label"]: (1.0 if b["label"] == predicted else 0.0) for b in brackets}
             corrected_probs = dict(raw_probs)
 
+        probability_source_out = forecast.get("probability_source", "deterministic")
+        probabilistic_out = bool(forecast.get("probabilistic", False))
+        dist_market_out = calibrated_dist or dist_market
+        max_temp_market_out = forecast.get("max_temp_market")
+        ensemble_mean_out = float(forecast.get("max_temp_market", 0.0))
+        ensemble_count_out = int(forecast.get("point_count", 0))
+        conditioning_source = "forward_test_tomorrow"
+
+        if (
+            city_key == "nyc"
+            and config.NYC_PROB_USE_IN_FORWARD
+            and nyc_prob_engine
+            and nyc_prob_engine.get("ok")
+        ):
+            bp = nyc_prob_engine.get("bracket_probs") or {}
+            if bp:
+                raw_probs = {str(k): float(v) for k, v in bp.items()}
+                corrected_probs = dict(raw_probs)
+                predicted = nyc_prob_engine.get("predicted_bracket")
+                dist_market_out = {
+                    int(k): float(v)
+                    for k, v in (nyc_prob_engine.get("degree_dist_f") or {}).items()
+                }
+                max_temp_market_out = nyc_prob_engine.get("expected_max_f")
+                ensemble_mean_out = float(max_temp_market_out or ensemble_mean_out)
+                ensemble_count_out = int(nyc_prob_engine.get("source_count") or 0)
+                probability_source_out = "nyc_prob_engine"
+                probabilistic_out = True
+                conditioning_source = "nyc_prob_engine"
+                calibration_meta = {
+                    "used": False,
+                    "reason": "nyc_prob_engine",
+                    "samples": ensemble_count_out,
+                    "mean_error": 0.0,
+                    "sd_error": 0.0,
+                    "bucket": lead_bucket,
+                }
+
         favorite = _favorite_label(brackets, prices, books_raw or {})
 
         pred_book = books_raw.get(predicted, {}) if predicted else {}
@@ -368,11 +412,11 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
             },
             "books": books,
             "ensemble": {
-                "mean": float(forecast.get("max_temp_market", 0.0)),
-                "count": int(forecast.get("point_count", 0)),
+                "mean": ensemble_mean_out,
+                "count": ensemble_count_out,
                 "raw_probs": raw_probs,
                 "corrected_probs": corrected_probs,
-                "conditioning": {"source": "forward_test_tomorrow"},
+                "conditioning": {"source": conditioning_source},
                 "model_agreement": {},
                 "family_agreement": {},
             },
@@ -385,21 +429,22 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
             },
             "gas": gas_data,
             "nyc_ingestion": nyc_ingestion,
+            "nyc_prob_engine": nyc_prob_engine,
             "source_health": source_health,
             "forward_test": {
                 "source": forecast.get("source", "tomorrow.io"),
-                "probability_source": forecast.get("probability_source", "deterministic"),
-                "probabilistic": bool(forecast.get("probabilistic", False)),
+                "probability_source": probability_source_out,
+                "probabilistic": probabilistic_out,
                 "used_fields": forecast.get("used_fields", ""),
                 "cache": forecast.get("cache", "miss"),
                 "cache_age_seconds": int(forecast.get("cache_age_seconds", 0) or 0),
                 "timestep": forecast.get("timestep", ""),
                 "as_of_utc": forecast.get("as_of_utc", ""),
-                "max_temp_market": forecast.get("max_temp_market"),
+                "max_temp_market": max_temp_market_out,
                 "max_temp_c": forecast.get("max_temp_c"),
                 "max_time_utc": forecast.get("max_time_utc", ""),
                 "max_time_local": forecast.get("max_time_local", ""),
-                "max_dist_market": calibrated_dist or dist_market,
+                "max_dist_market": dist_market_out,
                 "calibration": calibration_meta,
                 "predicted_bracket": predicted,
                 "favorite_bracket": favorite,

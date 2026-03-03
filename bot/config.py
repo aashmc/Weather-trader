@@ -184,6 +184,26 @@ NYC_INGESTION_MODELS = {
     "ecmwf_ens": os.getenv("NYC_MODEL_ECMWF_ENS", "ecmwf_ifs025_ensemble").strip(),
 }
 
+# NYC quant probability engine (forward-test only).
+NYC_PROB_ENGINE_ENABLED = os.getenv(
+    "NYC_PROB_ENGINE_ENABLED", "true"
+).strip().lower() in ("1", "true", "yes", "on")
+NYC_PROB_USE_IN_FORWARD = os.getenv(
+    "NYC_PROB_USE_IN_FORWARD", "true"
+).strip().lower() in ("1", "true", "yes", "on")
+NYC_PROB_WEIGHTS = {
+    "nbm": 0.35,
+    "hrrr": 0.20,
+    "gefs": 0.20,
+    "ecmwf_ens": 0.25,
+}
+NYC_PROB_SIGMA_F = {
+    "nbm": 1.20,
+    "hrrr": 1.60,
+    "gefs": 1.45,
+    "ecmwf_ens": 1.35,
+}
+
 # ══════════════════════════════════════════════════════
 # ROLLING CALIBRATION (ITEM #3)
 # ══════════════════════════════════════════════════════
@@ -599,6 +619,10 @@ def get_runtime_effective() -> dict:
         "nyc_ingestion_ensemble_api": NYC_INGESTION_ENSEMBLE_API,
         "nyc_ingestion_forecast_days": NYC_INGESTION_FORECAST_DAYS,
         "nyc_ingestion_models": dict(NYC_INGESTION_MODELS),
+        "nyc_prob_engine_enabled": NYC_PROB_ENGINE_ENABLED,
+        "nyc_prob_use_in_forward": NYC_PROB_USE_IN_FORWARD,
+        "nyc_prob_weights": dict(NYC_PROB_WEIGHTS),
+        "nyc_prob_sigma_f": dict(NYC_PROB_SIGMA_F),
         "city_thresholds": {
             city_key: {
                 "min_models": cfg.get("min_models"),

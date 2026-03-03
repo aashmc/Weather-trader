@@ -66,6 +66,7 @@ from tomorrow_quality import (
     mark_daily_report_sent,
 )
 from nyc_ingestion import capture_nyc_ingestion
+from nyc_probability import build_nyc_probability_snapshot
 from source_health import (
     check_books_contract,
     check_ensemble_contract,
@@ -838,6 +839,11 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
                 "coverage": nyc_ingestion.get("coverage", {}),
                 "metar_status": (nyc_ingestion.get("metar") or {}).get("status"),
             }
+            if city_key == "nyc" and config.NYC_PROB_ENGINE_ENABLED:
+                forecast["nyc_prob_engine"] = build_nyc_probability_snapshot(
+                    ingestion=nyc_ingestion,
+                    brackets=brackets,
+                )
         books = await fetch_all_books(token_ids)
 
         if config.SOURCE_CONTRACT_CHECKS_ENABLED:
@@ -893,6 +899,9 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
             "bucket": lead_bucket,
         }
         dist_for_snapshot = {}
+        forecast_max_for_snapshot = float(forecast["max_temp_market"])
+        probability_source_for_snapshot = forecast.get("probability_source", "deterministic")
+        probabilistic_for_snapshot = bool(forecast.get("probabilistic", False))
         dist_market_raw = forecast.get("max_dist_market") or {}
         if dist_market_raw:
             dist_market = {}
@@ -915,15 +924,43 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
                 if bracket_probs:
                     predicted = max(bracket_probs, key=bracket_probs.get)
 
+        nyc_prob = forecast.get("nyc_prob_engine") or {}
+        if (
+            city_key == "nyc"
+            and bool(config.NYC_PROB_USE_IN_FORWARD)
+            and bool(nyc_prob.get("ok"))
+        ):
+            nyc_bracket_probs = nyc_prob.get("bracket_probs") or {}
+            if nyc_bracket_probs:
+                bracket_probs = {str(k): float(v) for k, v in nyc_bracket_probs.items()}
+                predicted = nyc_prob.get("predicted_bracket")
+                dist_for_snapshot = {
+                    int(k): float(v)
+                    for k, v in (nyc_prob.get("degree_dist_f") or {}).items()
+                }
+                forecast_max_for_snapshot = float(
+                    nyc_prob.get("expected_max_f") or forecast_max_for_snapshot
+                )
+                probability_source_for_snapshot = "nyc_prob_engine"
+                probabilistic_for_snapshot = True
+                calibration_meta = {
+                    "used": False,
+                    "reason": "nyc_prob_engine",
+                    "samples": int(nyc_prob.get("source_count", 0)),
+                    "mean_error": 0.0,
+                    "sd_error": 0.0,
+                    "bucket": lead_bucket,
+                }
+
         record_forward_snapshot(
             city_name=city_name,
             date_str=date_str,
             lead_bucket=lead_bucket,
-            forecast_max_market=float(forecast["max_temp_market"]),
+            forecast_max_market=forecast_max_for_snapshot,
             dist_market=dist_for_snapshot,
             bracket_probs=bracket_probs,
-            probability_source=forecast.get("probability_source", "deterministic"),
-            probabilistic=bool(forecast.get("probabilistic", False)),
+            probability_source=probability_source_for_snapshot,
+            probabilistic=probabilistic_for_snapshot,
         )
 
         sim = _build_forward_trade_decision(
@@ -937,8 +974,8 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
         )
         if predicted and bracket_probs:
             sim["predicted_prob"] = round(float(bracket_probs.get(predicted, 0.0)), 4)
-        sim["probability_source"] = forecast.get("probability_source", "deterministic")
-        sim["probabilistic"] = bool(forecast.get("probabilistic", False))
+        sim["probability_source"] = probability_source_for_snapshot
+        sim["probabilistic"] = probabilistic_for_snapshot
 
         log.info(
             "%s %s: Tomorrow max %.1f%s -> %s (p=%s) | action=%s ask=%.3f spread=%.3f",

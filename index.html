@@ -208,6 +208,34 @@ body{
   flex-wrap:wrap;
   gap:8px;
 }
+.mini-table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  min-width:0;
+}
+.mini-table th{
+  text-align:right;
+  font-family:'JetBrains Mono',monospace;
+  font-size:10px;
+  letter-spacing:.6px;
+  text-transform:uppercase;
+  color:#25463c;
+  background:#e7f3ee;
+  padding:7px 6px;
+  border-bottom:1px solid #c9ddd4;
+}
+.mini-table th:first-child{text-align:left}
+.mini-table td{
+  text-align:right;
+  font-family:'JetBrains Mono',monospace;
+  font-size:11px;
+  color:var(--dm);
+  padding:7px 6px;
+  border-bottom:1px solid #e7efea;
+}
+.mini-table td:first-child{text-align:left;color:var(--tx);font-weight:700}
+.mini-scroll{overflow:auto}
 .dtabs{display:flex;gap:7px;overflow-x:auto;padding-bottom:2px}
 .dtab{
   border:1px solid var(--line);
@@ -492,6 +520,24 @@ tbody tr:nth-child(even) td{background:#fbfdfc}
         <div class="pos-list" id="livePosList"></div>
       </section>
 
+      <section class="panel" id="modelProbPanel" style="padding:12px;display:none">
+        <div class="pt">NYC Model Bracket Probabilities</div>
+        <div class="mini-scroll">
+          <table class="mini-table">
+            <thead>
+              <tr>
+                <th>Bracket</th>
+                <th>NBM %</th>
+                <th>GEFS %</th>
+                <th>ECMWF %</th>
+                <th>Combined %</th>
+              </tr>
+            </thead>
+            <tbody id="modelProbBody"></tbody>
+          </table>
+        </div>
+      </section>
+
       <div class="split-panels">
         <div class="pn" id="histPanel" style="display:none">
           <div class="pt" id="histTitle">Distribution: Raw → Corrected → Market</div>
@@ -674,6 +720,7 @@ let BOT_PAUSED=false;
 let RUNTIME_EFFECTIVE={};
 let API_CONNECTED=false;
 let LIVE_POSITIONS=[];
+let NYC_MODEL_BRACKET_PROBS=null;
 window._forwardMode=false;
 window._forwardPredictedBracket=null;
 window._forwardProbSource="";
@@ -842,6 +889,73 @@ function renderLivePositions(){
       <div class="pos-main"><span>${city} ${d}</span><span>$${w.toFixed(2)}</span></div>
       <div class="pos-sub"><span>${b}</span><span>ask ${(ask*100).toFixed(1)}¢</span><span>${fill}</span><span title="${escAttr(oid)}">${escHtml(shortOid)}</span></div>
     </div>`;
+  }).join("");
+}
+
+function mapDegreeDistToBracketProbs(distByDeg,labels){
+  const out={};
+  for(const label of labels){
+    const p=parseBracket(label);
+    if(!p){out[label]=0;continue}
+    let sum=0;
+    for(const [k,v] of Object.entries(distByDeg||{})){
+      const deg=parseInt(k,10);
+      const prob=Number(v||0);
+      if(Number.isNaN(deg)||!Number.isFinite(prob)||prob<=0)continue;
+      if(p.type==="below"&&deg<=p.high)sum+=prob;
+      else if(p.type==="above"&&deg>=p.low)sum+=prob;
+      else if(p.type==="single"&&deg===p.val)sum+=prob;
+      else if(p.type==="range"&&deg>=p.low&&deg<=p.high)sum+=prob;
+    }
+    out[label]=sum;
+  }
+  return out;
+}
+
+function buildNycModelBracketProbs(snap){
+  if(!snap||CITY.polyCity!=="nyc")return null;
+  const engine=snap.nyc_prob_engine||{};
+  const sources=Array.isArray(engine.sources)?engine.sources:[];
+  if(!sources.length||!B.length)return null;
+  const byName={};
+  for(const s of sources){
+    const nm=String(s.name||"").toLowerCase();
+    byName[nm]=mapDegreeDistToBracketProbs(s.dist_f||{},B);
+  }
+  const combinedRaw=engine.bracket_probs||{};
+  const combined={};
+  for(const b of B){
+    combined[b]=Number(combinedRaw[b]??corrProbs[b]??0);
+  }
+  return{
+    nbm:byName.nbm||{},
+    gefs:byName.gefs||{},
+    ecmwf_ens:byName.ecmwf_ens||{},
+    combined,
+  };
+}
+
+function renderModelProbPanel(){
+  const panel=$("modelProbPanel"),body=$("modelProbBody");
+  if(!panel||!body)return;
+  if(CITY.polyCity!=="nyc"||!NYC_MODEL_BRACKET_PROBS||!B.length){
+    panel.style.display="none";
+    body.innerHTML="";
+    return;
+  }
+  panel.style.display="block";
+  body.innerHTML=B.map(b=>{
+    const nbm=Number(NYC_MODEL_BRACKET_PROBS.nbm?.[b]||0);
+    const gefs=Number(NYC_MODEL_BRACKET_PROBS.gefs?.[b]||0);
+    const ecm=Number(NYC_MODEL_BRACKET_PROBS.ecmwf_ens?.[b]||0);
+    const cmb=Number(NYC_MODEL_BRACKET_PROBS.combined?.[b]||0);
+    return `<tr>
+      <td>${escHtml(b)}</td>
+      <td>${(nbm*100).toFixed(1)}</td>
+      <td>${(gefs*100).toFixed(1)}</td>
+      <td>${(ecm*100).toFixed(1)}</td>
+      <td style="color:var(--tx);font-weight:700">${(cmb*100).toFixed(1)}</td>
+    </tr>`;
   }).join("");
 }
 
@@ -1138,6 +1252,7 @@ function selectCity(key){
   // Reset all state
   B=[];TOKENS={};prices={};books={};rawProbs={};corrProbs={};
   ensMean=0;ensCount=0;metarTemp=null;metarHigh=null;metarDayMax=null;
+  NYC_MODEL_BRACKET_PROBS=null;
   _marketsDiscovered=false;
   // Immediately clear analysis display to prevent stale brackets showing
   $("tbl").innerHTML="";$("totals").innerHTML="";$("hist").innerHTML="";
@@ -1148,6 +1263,7 @@ function selectCity(key){
   // Update UI
   renderCityNav();
   renderLivePositions();
+  renderModelProbPanel();
   $("hdrTitle").innerHTML=CITY.name+" High Temp <span></span>";
   $("stationInfo").textContent=CITY.icao+" "+CITY.lat.toFixed(3)+"°N "+Math.abs(CITY.lon).toFixed(3)+"°"+(CITY.lon>=0?"E":"W");
   $("curTs").textContent="station "+CITY.icao;
@@ -1376,6 +1492,8 @@ async function fetchDashboardSnapshot(){
     window._forwardMode=!!fwd;
     window._forwardPredictedBracket=fwd?.predicted_bracket||null;
     window._forwardProbSource=fwd?.probability_source||"";
+    NYC_MODEL_BRACKET_PROBS=buildNycModelBracketProbs(snap);
+    renderModelProbPanel();
     if(fwd){
       $("ensMean").textContent=fwd.predicted_bracket||"—";
       const sim=fwd.simulated_trade||{};
@@ -1435,6 +1553,8 @@ async function fetchDashboardSnapshot(){
     rawProbs={};corrProbs={};ensMean=0;ensCount=0;
     window._forwardMode=false;
     window._forwardPredictedBracket=null;
+    NYC_MODEL_BRACKET_PROBS=null;
+    renderModelProbPanel();
     $("ensMean").textContent="—";$("ensSrc").textContent="error";
     $("sigT").textContent="Snapshot error";
     $("sigN").textContent="NO DATA";
@@ -1666,7 +1786,10 @@ function render(){
   if(LIVE_MODE){
     et.style.display="block";
     let msg="",col="",bg="";
-    if(!lateApplies){
+    if(isForward){
+      msg=`Forward test mode (${CITY.tz}) — no late-cutoff time filter is applied. Simulated entry is only on predicted bracket.`;
+      col="var(--h2)";bg="rgba(14,149,143,.08)";
+    }else if(!lateApplies){
       msg=`Late guard inactive for this date (local ${localDateNow}).`;
       col="var(--dm)";bg="rgba(39,39,42,.04)";
     }else if(latePhase==="normal"){

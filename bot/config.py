@@ -171,6 +171,10 @@ NYC_INGESTION_FORECAST_API = os.getenv(
     "NYC_INGESTION_FORECAST_API",
     "https://previous-runs-api.open-meteo.com/v1/forecast",
 ).strip()
+NYC_INGESTION_ENSEMBLE_API = os.getenv(
+    "NYC_INGESTION_ENSEMBLE_API",
+    "https://ensemble-api.open-meteo.com/v1/ensemble",
+).strip()
 NYC_INGESTION_FORECAST_DAYS = max(1, int(os.getenv("NYC_INGESTION_FORECAST_DAYS", "3")))
 NYC_INGESTION_TIMEOUT_SECONDS = max(5, int(os.getenv("NYC_INGESTION_TIMEOUT_SECONDS", "20")))
 NYC_INGESTION_MODELS = {
@@ -592,6 +596,7 @@ def get_runtime_effective() -> dict:
         "source_contract_strict_city_keys": list(SOURCE_CONTRACT_STRICT_CITY_KEYS),
         "nyc_ingestion_enabled": NYC_INGESTION_ENABLED,
         "nyc_ingestion_forecast_api": NYC_INGESTION_FORECAST_API,
+        "nyc_ingestion_ensemble_api": NYC_INGESTION_ENSEMBLE_API,
         "nyc_ingestion_forecast_days": NYC_INGESTION_FORECAST_DAYS,
         "nyc_ingestion_models": dict(NYC_INGESTION_MODELS),
         "city_thresholds": {

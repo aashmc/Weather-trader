@@ -93,6 +93,12 @@ def _extract_run_time_utc(payload: dict) -> str | None:
     return None
 
 
+def _endpoint_for_source(source_name: str) -> str:
+    if source_name in ("gefs", "ecmwf_ens"):
+        return config.NYC_INGESTION_ENSEMBLE_API
+    return config.NYC_INGESTION_FORECAST_API
+
+
 def _extract_hourly_temperature_series(hourly: dict) -> tuple[list, list]:
     """
     Return (times, temps_c) where temps_c is either direct temperature_2m values
@@ -199,9 +205,10 @@ async def _fetch_source(city: dict, date_str: str, source_name: str, model_id: s
         "forecast_days": int(config.NYC_INGESTION_FORECAST_DAYS),
         "timezone": city["tz"],
     }
+    endpoint = _endpoint_for_source(source_name)
     try:
         payload = await get_json(
-            config.NYC_INGESTION_FORECAST_API,
+            endpoint,
             params=params,
             timeout=float(config.NYC_INGESTION_TIMEOUT_SECONDS),
             attempts=config.API_RETRY_ATTEMPTS,
@@ -217,6 +224,7 @@ async def _fetch_source(city: dict, date_str: str, source_name: str, model_id: s
             "status": "ok",
             "source": source_name,
             "model": model_id,
+            "endpoint": endpoint,
             "run_time_utc": _extract_run_time_utc(payload),
             "generationtime_ms": _safe_float(payload.get("generationtime_ms")),
             "as_of_utc": started_at.isoformat(),
@@ -227,6 +235,7 @@ async def _fetch_source(city: dict, date_str: str, source_name: str, model_id: s
             "status": "error",
             "source": source_name,
             "model": model_id,
+            "endpoint": endpoint,
             "error": str(exc)[:240],
             "as_of_utc": started_at.isoformat(),
         }

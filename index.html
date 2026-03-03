@@ -522,6 +522,7 @@ tbody tr:nth-child(even) td{background:#fbfdfc}
 
       <section class="panel" id="modelProbPanel" style="padding:12px;display:none">
         <div class="pt">NYC Model Bracket Probabilities</div>
+        <div class="pos-meta" id="modelProbMeta"></div>
         <div class="mini-scroll">
           <table class="mini-table">
             <thead>
@@ -720,6 +721,9 @@ let BOT_PAUSED=false;
 let RUNTIME_EFFECTIVE={};
 let API_CONNECTED=false;
 let LIVE_POSITIONS=[];
+let LIVE_POS_MARKS={};
+let LIVE_POS_MARKS_INFLIGHT=false;
+let LIVE_POS_MARKS_AT=0;
 let NYC_MODEL_BRACKET_PROBS=null;
 window._forwardMode=false;
 window._forwardPredictedBracket=null;
@@ -777,6 +781,7 @@ function updateTopChips(summary){
   setBotSwitchUi(BOT_PAUSED);
   LIVE_POSITIONS=Array.isArray(summary?.active_positions)?summary.active_positions:[];
   renderLivePositions();
+  refreshLivePositionMarks();
 }
 
 function setApiConnected(ok){
@@ -885,11 +890,113 @@ function renderLivePositions(){
     const fill=escHtml(p.fill_status||"");
     const oid=String(p.order_id||"");
     const shortOid=oid?`${oid.slice(0,10)}...${oid.slice(-6)}`:"n/a";
+    const mk=`${String(p.city||"")}|${String(p.market_date||"")}|${String(p.bracket||"")}`;
+    const m=LIVE_POS_MARKS[mk]||null;
+    const markTxt=m&&m.status==="ok"&&Number.isFinite(m.mark)?`mark ${(m.mark*100).toFixed(1)}¢`:"mark n/a";
+    const upnlVal=m&&m.status==="ok"&&Number.isFinite(m.upnl)?Number(m.upnl):null;
+    const upnlTxt=upnlVal==null?"uPnL n/a":(upnlVal>=0?`uPnL +$${upnlVal.toFixed(2)}`:`uPnL -$${Math.abs(upnlVal).toFixed(2)}`);
+    const upnlColor=upnlVal==null?"var(--muted)":(upnlVal>=0?"var(--gn)":"var(--rd)");
+    const stateTxt=m&&m.status==="ok"&&m.resolved?"resolved":"live";
     return `<div class="pos-row">
       <div class="pos-main"><span>${city} ${d}</span><span>$${w.toFixed(2)}</span></div>
-      <div class="pos-sub"><span>${b}</span><span>ask ${(ask*100).toFixed(1)}¢</span><span>${fill}</span><span title="${escAttr(oid)}">${escHtml(shortOid)}</span></div>
+      <div class="pos-sub"><span>bet ${b}</span><span>entry ${(ask*100).toFixed(1)}¢</span><span>${markTxt}</span><span style="color:${upnlColor};font-weight:700">${upnlTxt}</span><span>${stateTxt}</span><span>${fill}</span><span title="${escAttr(oid)}">${escHtml(shortOid)}</span></div>
     </div>`;
   }).join("");
+}
+
+function positionCityToKey(city){
+  const raw=String(city||"").trim().toLowerCase();
+  if(CITIES[raw])return raw;
+  for(const [k,v] of Object.entries(CITIES)){
+    if(String(v?.name||"").trim().toLowerCase()===raw)return k;
+  }
+  return null;
+}
+
+async function refreshLivePositionMarks(force=false){
+  if(!API_CONNECTED)return;
+  const all=Array.isArray(LIVE_POSITIONS)?LIVE_POSITIONS:[];
+  if(!all.length){
+    LIVE_POS_MARKS={};
+    renderLivePositions();
+    return;
+  }
+  const now=Date.now();
+  if(!force&&LIVE_POS_MARKS_INFLIGHT)return;
+  if(!force&&(now-LIVE_POS_MARKS_AT)<20000)return;
+  LIVE_POS_MARKS_INFLIGHT=true;
+  try{
+    const marketKeys=[];
+    const seen=new Set();
+    for(const p of all){
+      const ck=positionCityToKey(p.city);
+      const dt=String(p.market_date||"");
+      if(!ck||!dt)continue;
+      const mk=`${ck}:${dt}`;
+      if(seen.has(mk))continue;
+      seen.add(mk);
+      marketKeys.push({cityKey:ck,dateStr:dt,key:mk});
+    }
+    const snapshots=await Promise.all(marketKeys.map(async m=>{
+      try{
+        const snap=await apiGet(`/api/dashboard/snapshot?city=${encodeURIComponent(m.cityKey)}&date=${encodeURIComponent(m.dateStr)}`);
+        return [m.key,snap];
+      }catch(_e){
+        return [m.key,null];
+      }
+    }));
+    const snapBy=Object.fromEntries(snapshots);
+    const marks={};
+    for(const p of all){
+      const cityRaw=String(p.city||"");
+      const dateRaw=String(p.market_date||"");
+      const bracket=String(p.bracket||"");
+      const rowKey=`${cityRaw}|${dateRaw}|${bracket}`;
+      const ck=positionCityToKey(cityRaw);
+      if(!ck||!dateRaw||!bracket){
+        marks[rowKey]={status:"no_data"};
+        continue;
+      }
+      const snap=snapBy[`${ck}:${dateRaw}`];
+      if(!snap||!snap.market){
+        marks[rowKey]={status:"no_data"};
+        continue;
+      }
+      const pricesBy=snap.market?.prices||{};
+      const book=(snap.books||{})[bracket]||{};
+      const bid=Number(book.bb??0);
+      const ask=Number(book.ba??0);
+      let mark=Number(book.mid??NaN);
+      if(!Number.isFinite(mark)||mark<=0){
+        const px=Number(pricesBy[bracket]??NaN);
+        if(Number.isFinite(px)&&px>0)mark=px;
+        else if(bid>0&&ask>0)mark=(bid+ask)/2;
+        else mark=Math.max(0,bid,ask);
+      }
+      const wager=Number(p.wager||0);
+      const entryAsk=Number(p.ask||0);
+      const contracts=(wager>0&&entryAsk>0)?(wager/entryAsk):0;
+      const resolved=!!snap.market.resolved;
+      const winner=String(snap.market.winner||"");
+      let upnl=null;
+      if(contracts>0&&Number.isFinite(mark)){
+        upnl=contracts*(mark-entryAsk);
+      }
+      if(contracts>0&&resolved&&winner){
+        const settle=(winner===bracket)?1:0;
+        upnl=contracts*(settle-entryAsk);
+        mark=settle;
+      }
+      marks[rowKey]={status:"ok",mark,bid,ask,upnl,resolved,winner};
+    }
+    LIVE_POS_MARKS=marks;
+    LIVE_POS_MARKS_AT=Date.now();
+  }catch(e){
+    log("Position mark refresh failed: "+(e?.message||"unknown"),"lw");
+  }finally{
+    LIVE_POS_MARKS_INFLIGHT=false;
+    renderLivePositions();
+  }
 }
 
 function mapDegreeDistToBracketProbs(distByDeg,labels){
@@ -918,32 +1025,72 @@ function buildNycModelBracketProbs(snap){
   const sources=Array.isArray(engine.sources)?engine.sources:[];
   if(!sources.length||!B.length)return null;
   const byName={};
+  const meta={};
   for(const s of sources){
     const nm=String(s.name||"").toLowerCase();
-    byName[nm]=mapDegreeDistToBracketProbs(s.dist_f||{},B);
+    const mapped=mapDegreeDistToBracketProbs(s.dist_f||{},B);
+    byName[nm]=mapped;
+    let topBracket="",topProb=-1;
+    for(const b of B){
+      const p=Number(mapped[b]||0);
+      if(p>topProb){topProb=p;topBracket=b}
+    }
+    const meanF=Number(s.mean_f??NaN);
+    meta[nm]={
+      mean_f:Number.isFinite(meanF)?meanF:null,
+      top_bracket:topBracket||null,
+      top_prob:topProb>0?topProb:0,
+    };
   }
   const combinedRaw=engine.bracket_probs||{};
   const combined={};
   for(const b of B){
     combined[b]=Number(combinedRaw[b]??corrProbs[b]??0);
   }
+  let combinedTop="",combinedProb=-1;
+  for(const b of B){
+    const p=Number(combined[b]||0);
+    if(p>combinedProb){combinedProb=p;combinedTop=b}
+  }
+  const expF=Number(engine.expected_max_f??NaN);
   return{
     nbm:byName.nbm||{},
     gefs:byName.gefs||{},
     ecmwf_ens:byName.ecmwf_ens||{},
     combined,
+    meta:{
+      ...meta,
+      combined:{
+        mean_f:Number.isFinite(expF)?expF:null,
+        top_bracket:combinedTop||null,
+        top_prob:combinedProb>0?combinedProb:0,
+      },
+    },
   };
 }
 
 function renderModelProbPanel(){
-  const panel=$("modelProbPanel"),body=$("modelProbBody");
-  if(!panel||!body)return;
+  const panel=$("modelProbPanel"),body=$("modelProbBody"),metaEl=$("modelProbMeta");
+  if(!panel||!body||!metaEl)return;
   if(CITY.polyCity!=="nyc"||!NYC_MODEL_BRACKET_PROBS||!B.length){
     panel.style.display="none";
     body.innerHTML="";
+    metaEl.textContent="";
     return;
   }
   panel.style.display="block";
+  const meta=NYC_MODEL_BRACKET_PROBS.meta||{};
+  const toTxt=(obj,label)=>{
+    if(!obj)return`${label}: n/a`;
+    const m=Number(obj.mean_f);
+    const b=obj.top_bracket?String(obj.top_bracket):"n/a";
+    const p=Number(obj.top_prob||0);
+    const mTxt=Number.isFinite(m)?`${m.toFixed(1)}°F`:"n/a";
+    return `${label} max ${mTxt} → ${b} (${(p*100).toFixed(1)}%)`;
+  };
+  const means=[meta.nbm?.mean_f,meta.gefs?.mean_f,meta.ecmwf_ens?.mean_f].map(x=>Number(x)).filter(x=>Number.isFinite(x));
+  const spreadTxt=means.length>=2?` · spread ${(Math.max(...means)-Math.min(...means)).toFixed(1)}°F`:"";
+  metaEl.textContent=`${toTxt(meta.nbm,"NBM")} · ${toTxt(meta.gefs,"GEFS")} · ${toTxt(meta.ecmwf_ens,"ECMWF")}${spreadTxt}`;
   body.innerHTML=B.map(b=>{
     const nbm=Number(NYC_MODEL_BRACKET_PROBS.nbm?.[b]||0);
     const gefs=Number(NYC_MODEL_BRACKET_PROBS.gefs?.[b]||0);
@@ -1043,6 +1190,7 @@ async function refreshSummary(manual=false){
       updateActivePositionNotice();
     if(B.length&&Object.keys(prices).length)render();
     setApiConnected(true);
+      refreshLivePositionMarks(true);
       if(manual)setApiMsg(`Connected to live bot API (${API_BASE}).`);
       return;
     }catch(e){
@@ -1264,6 +1412,7 @@ function selectCity(key){
   renderCityNav();
   renderLivePositions();
   renderModelProbPanel();
+  refreshLivePositionMarks(true);
   $("hdrTitle").innerHTML=CITY.name+" High Temp <span></span>";
   $("stationInfo").textContent=CITY.icao+" "+CITY.lat.toFixed(3)+"°N "+Math.abs(CITY.lon).toFixed(3)+"°"+(CITY.lon>=0?"E":"W");
   $("curTs").textContent="station "+CITY.icao;
@@ -1852,6 +2001,7 @@ renderCityNav();
 selectCity("nyc"); // default
 setInterval(()=>{cd--;$("badge").textContent="Auto-refresh "+cd+"s";updateCityClock();if(cd<=0)refresh()},1000);
 setInterval(()=>refreshSummary(false),15000);
+setInterval(()=>refreshLivePositionMarks(),20000);
 setInterval(()=>refreshLiveLogs(),10000);
 </script>
 </body>

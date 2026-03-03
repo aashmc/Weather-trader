@@ -93,6 +93,46 @@ def _extract_run_time_utc(payload: dict) -> str | None:
     return None
 
 
+def _extract_hourly_temperature_series(hourly: dict) -> tuple[list, list]:
+    """
+    Return (times, temps_c) where temps_c is either direct temperature_2m values
+    or an average across ensemble member series when direct values are missing.
+    """
+    times = list((hourly or {}).get("time", []) or [])
+    if not times:
+        return [], []
+
+    direct = list((hourly or {}).get("temperature_2m", []) or [])
+    if len(direct) == len(times):
+        valid_direct = sum(1 for v in direct if _safe_float(v) is not None)
+        if valid_direct > 0:
+            return times, direct
+
+    member_keys = sorted(
+        k for k in (hourly or {}).keys() if str(k).startswith("temperature_2m_member")
+    )
+    if not member_keys:
+        return times, []
+
+    member_series = [list((hourly or {}).get(k, []) or []) for k in member_keys]
+    member_series = [s for s in member_series if len(s) == len(times)]
+    if not member_series:
+        return times, []
+
+    temps = []
+    for idx in range(len(times)):
+        vals = []
+        for series in member_series:
+            fv = _safe_float(series[idx])
+            if fv is not None:
+                vals.append(fv)
+        if vals:
+            temps.append(sum(vals) / len(vals))
+        else:
+            temps.append(None)
+    return times, temps
+
+
 def _summarize_hourly(
     *,
     payload: dict,
@@ -100,8 +140,7 @@ def _summarize_hourly(
     tz_name: str,
 ) -> dict:
     hourly = payload.get("hourly", {}) or {}
-    times = hourly.get("time", []) or []
-    temps = hourly.get("temperature_2m", []) or []
+    times, temps = _extract_hourly_temperature_series(hourly)
     if not isinstance(times, list) or not isinstance(temps, list):
         raise ValueError("invalid hourly payload shape")
     if len(times) != len(temps):

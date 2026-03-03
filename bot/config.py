@@ -175,7 +175,7 @@ NYC_INGESTION_FORECAST_DAYS = max(1, int(os.getenv("NYC_INGESTION_FORECAST_DAYS"
 NYC_INGESTION_TIMEOUT_SECONDS = max(5, int(os.getenv("NYC_INGESTION_TIMEOUT_SECONDS", "20")))
 NYC_INGESTION_MODELS = {
     "nbm": os.getenv("NYC_MODEL_NBM", "ncep_nbm_conus").strip(),
-    "hrrr": os.getenv("NYC_MODEL_HRRR", "hrrr").strip(),
+    "hrrr": os.getenv("NYC_MODEL_HRRR", "ncep_hrrr_conus").strip(),
     "gefs": os.getenv("NYC_MODEL_GEFS", "ncep_gefs025").strip(),
     "ecmwf_ens": os.getenv("NYC_MODEL_ECMWF_ENS", "ecmwf_ifs025_ensemble").strip(),
 }

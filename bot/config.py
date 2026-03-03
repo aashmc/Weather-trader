@@ -439,6 +439,21 @@ CITIES = {
     },
 }
 
+# Optional city scope for targeted forward tests (e.g., "nyc").
+_ENABLED_CITIES = [
+    x.strip().lower()
+    for x in os.getenv("ENABLED_CITIES", "").split(",")
+    if x.strip()
+]
+if _ENABLED_CITIES:
+    _allowed = set(_ENABLED_CITIES)
+    _filtered = {k: v for k, v in CITIES.items() if k in _allowed}
+    if _filtered:
+        CITIES = _filtered
+    elif "nyc" in CITIES:
+        # Safe fallback if env value is invalid/mistyped.
+        CITIES = {"nyc": CITIES["nyc"]}
+
 # Total model count per city
 for city_cfg in CITIES.values():
     city_cfg["total_models"] = len(city_cfg["ensemble_models"]) + (
@@ -629,6 +644,7 @@ def get_runtime_overrides() -> dict:
 
 def get_runtime_effective() -> dict:
     return {
+        "enabled_cities": list(CITIES.keys()),
         "max_bet_ratio": MAX_BET_RATIO,
         "max_exposure_ratio": MAX_EXPOSURE_RATIO,
         "daily_loss_ratio": DAILY_LOSS_RATIO,

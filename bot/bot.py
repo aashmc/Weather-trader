@@ -236,15 +236,56 @@ def _favorite_bracket(brackets: list[dict], prices: dict, books: dict) -> str | 
     return best_label
 
 
+def _book_quote_for_label(label: str | None, prices: dict, books: dict) -> dict:
+    if not label:
+        return {
+            "ask": 0.0,
+            "bid": 0.0,
+            "spread": 0.0,
+            "ask_depth": 0.0,
+            "bid_depth": 0.0,
+        }
+    book = books.get(label or "", {}) or {}
+    ask = float(book.get("ba", prices.get(label or "", 0.0)) or 0.0)
+    bid = float(book.get("bb", 0.0) or 0.0)
+    spread = float(book.get("spread", max(0.0, ask - bid)) or 0.0)
+    return {
+        "ask": ask,
+        "bid": bid,
+        "spread": spread,
+        "ask_depth": float(book.get("ask_depth", 0.0) or 0.0),
+        "bid_depth": float(book.get("bid_depth", 0.0) or 0.0),
+    }
+
+
+def _forward_edge_metrics(label: str | None, probs: dict, prices: dict, books: dict) -> dict:
+    q = _book_quote_for_label(label, prices, books)
+    p = float((probs or {}).get(label or "", 0.0) or 0.0)
+    eff_ask = q["ask"] + max(0.0, q["spread"]) * float(config.NYC_FORWARD_SPREAD_PENALTY_MULT)
+    edge = p - eff_ask
+    return {
+        "prob": p,
+        "ask": q["ask"],
+        "bid": q["bid"],
+        "spread": q["spread"],
+        "eff_ask": eff_ask,
+        "edge_after_costs": edge,
+        "ask_depth": q["ask_depth"],
+        "bid_depth": q["bid_depth"],
+    }
+
+
 def _build_forward_trade_decision(
     *,
     city_name: str,
+    city_key: str,
     date_str: str,
     brackets: list[dict],
     prices: dict,
     books: dict,
     forecast_max_market: float | None = None,
     predicted_bracket: str | None = None,
+    bracket_probs: dict | None = None,
 ) -> dict:
     predicted = predicted_bracket
     if not predicted:
@@ -252,27 +293,100 @@ def _build_forward_trade_decision(
             raise ValueError("missing forecast_max_market for forward decision")
         predicted = temp_to_bracket(forecast_max_market, brackets)
     favorite = _favorite_bracket(brackets, prices, books)
-    book = books.get(predicted or "", {})
-    ask = float(book.get("ba", prices.get(predicted or "", 0.0)) or 0.0)
-    bid = float(book.get("bb", 0.0) or 0.0)
-    spread = float(book.get("spread", max(0.0, ask - bid)) or 0.0)
+    probs = bracket_probs or {}
+    pred_metrics = _forward_edge_metrics(predicted, probs, prices, books)
+    ask = pred_metrics["ask"]
+    bid = pred_metrics["bid"]
+    spread = pred_metrics["spread"]
 
     state = _load_forward_state()
     key = f"{city_name}:{date_str}"
-    prev = (state.get(key) or {}).get("last_bracket")
+    prev_state = state.get(key) or {}
+    prev = prev_state.get("last_bracket")
+    now_utc = datetime.now(timezone.utc)
+    last_switch_ts = prev_state.get("last_switch_at_utc")
+    cooldown_ok = True
+    if last_switch_ts:
+        try:
+            cooldown_ok = (
+                (now_utc - datetime.fromisoformat(str(last_switch_ts))).total_seconds()
+                >= float(config.NYC_FORWARD_SWITCH_COOLDOWN_MINUTES) * 60.0
+            )
+        except ValueError:
+            cooldown_ok = True
     action = "enter"
-    if prev:
-        if prev == predicted:
-            action = "hold"
-        elif config.FORWARD_TEST_REENTER_ON_BRACKET_CHANGE:
-            action = "reenter_on_change"
+    decision_reason = "default_enter"
+    prev_metrics = _forward_edge_metrics(prev, probs, prices, books) if prev else {}
+
+    if city_key == "nyc" and config.NYC_FORWARD_POLICY_ENABLED and probs:
+        min_prob = float(config.NYC_FORWARD_MIN_MODEL_PROB)
+        min_edge = float(config.NYC_FORWARD_MIN_EDGE)
+        max_spread = float(config.NYC_FORWARD_MAX_SPREAD)
+        switch_buffer = float(config.NYC_FORWARD_SWITCH_EDGE_BUFFER)
+
+        if pred_metrics["prob"] < min_prob:
+            action = "skip_low_prob"
+            decision_reason = f"prob {pred_metrics['prob']:.3f} < {min_prob:.3f}"
+        elif pred_metrics["spread"] > max_spread:
+            action = "skip_wide_spread"
+            decision_reason = f"spread {pred_metrics['spread']:.3f} > {max_spread:.3f}"
+        elif pred_metrics["edge_after_costs"] < min_edge:
+            action = "skip_low_edge"
+            decision_reason = (
+                f"edge {pred_metrics['edge_after_costs']:.3f} < {min_edge:.3f}"
+            )
         else:
-            action = "no_reentry"
+            if not prev:
+                action = "enter"
+                decision_reason = "first_entry"
+            elif prev == predicted:
+                action = "hold"
+                decision_reason = "same_bracket"
+            else:
+                prev_edge = float(prev_metrics.get("edge_after_costs", 0.0))
+                improve = float(pred_metrics["edge_after_costs"] - prev_edge)
+                if not cooldown_ok:
+                    action = "hold"
+                    decision_reason = "switch_cooldown"
+                elif improve >= switch_buffer:
+                    action = "switch"
+                    decision_reason = (
+                        f"edge_improve {improve:.3f} >= {switch_buffer:.3f}"
+                    )
+                else:
+                    action = "hold"
+                    decision_reason = (
+                        f"edge_improve {improve:.3f} < {switch_buffer:.3f}"
+                    )
+    else:
+        if prev:
+            if prev == predicted:
+                action = "hold"
+                decision_reason = "same_bracket"
+            elif config.FORWARD_TEST_REENTER_ON_BRACKET_CHANGE:
+                action = "reenter_on_change"
+                decision_reason = "bracket_changed"
+            else:
+                action = "no_reentry"
+                decision_reason = "reentry_disabled"
+
+    held_bracket = predicted
+    if action in ("skip_low_prob", "skip_wide_spread", "skip_low_edge"):
+        held_bracket = prev
+    elif action == "hold":
+        held_bracket = prev or predicted
 
     state[key] = {
-        "last_bracket": predicted,
+        "last_bracket": held_bracket,
         "previous_bracket": prev,
-        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "updated_at_utc": now_utc.isoformat(),
+        "last_action": action,
+        "last_reason": decision_reason,
+        "last_switch_at_utc": (
+            now_utc.isoformat()
+            if action in ("switch", "reenter_on_change")
+            else prev_state.get("last_switch_at_utc")
+        ),
     }
     _save_forward_state(state)
 
@@ -283,15 +397,22 @@ def _build_forward_trade_decision(
         "favorite_bracket": favorite,
         "previous_bracket": prev,
         "action": action,
+        "action_reason": decision_reason,
         "bracket_changed": bool(prev and prev != predicted),
         "bracket": predicted,
+        "held_bracket": held_bracket,
         "ask": ask,
         "bid": bid,
         "spread": spread,
+        "effective_ask": float(pred_metrics["eff_ask"]),
+        "predicted_prob": float(pred_metrics["prob"]),
+        "edge_after_costs": float(pred_metrics["edge_after_costs"]),
+        "cooldown_ok": bool(cooldown_ok),
+        "prev_edge_after_costs": float(prev_metrics.get("edge_after_costs", 0.0) if prev else 0.0),
         "contracts": contracts,
         "notional": notional,
-        "book_bid_depth": float(book.get("bid_depth", 0.0) or 0.0),
-        "book_ask_depth": float(book.get("ask_depth", 0.0) or 0.0),
+        "book_bid_depth": float(pred_metrics["bid_depth"]),
+        "book_ask_depth": float(pred_metrics["ask_depth"]),
     }
 
 
@@ -932,25 +1053,50 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
         ):
             nyc_bracket_probs = nyc_prob.get("bracket_probs") or {}
             if nyc_bracket_probs:
-                bracket_probs = {str(k): float(v) for k, v in nyc_bracket_probs.items()}
-                predicted = nyc_prob.get("predicted_bracket")
-                dist_for_snapshot = {
+                nyc_dist = {
                     int(k): float(v)
                     for k, v in (nyc_prob.get("degree_dist_f") or {}).items()
                 }
+                calibrated_nyc_dist, nyc_cal_meta = apply_forward_error_calibration(
+                    city_name=city_name,
+                    lead_bucket=lead_bucket,
+                    dist_market=nyc_dist,
+                )
+                dist_for_snapshot = calibrated_nyc_dist or nyc_dist
+                bracket_probs = map_to_brackets(dist_for_snapshot, brackets)
+                s = sum(bracket_probs.values())
+                if s > 0:
+                    bracket_probs = {k: v / s for k, v in bracket_probs.items()}
+                if bracket_probs:
+                    predicted = max(bracket_probs, key=bracket_probs.get)
                 forecast_max_for_snapshot = float(
                     nyc_prob.get("expected_max_f") or forecast_max_for_snapshot
                 )
                 probability_source_for_snapshot = "nyc_prob_engine"
                 probabilistic_for_snapshot = True
                 calibration_meta = {
-                    "used": False,
-                    "reason": "nyc_prob_engine",
-                    "samples": int(nyc_prob.get("source_count", 0)),
-                    "mean_error": 0.0,
-                    "sd_error": 0.0,
+                    "used": bool(nyc_cal_meta.get("used", False)),
+                    "reason": str(nyc_cal_meta.get("reason", "nyc_prob_engine")),
+                    "samples": int(nyc_cal_meta.get("samples", 0)),
+                    "mean_error": float(nyc_cal_meta.get("mean_error", 0.0)),
+                    "sd_error": float(nyc_cal_meta.get("sd_error", 0.0)),
                     "bucket": lead_bucket,
+                    "source_count": int(nyc_prob.get("source_count", 0)),
                 }
+
+        sim = _build_forward_trade_decision(
+            city_name=city_name,
+            city_key=city_key,
+            date_str=date_str,
+            brackets=brackets,
+            prices=prices,
+            books=books,
+            forecast_max_market=float(forecast["max_temp_market"]),
+            predicted_bracket=predicted,
+            bracket_probs=bracket_probs,
+        )
+        sim["probability_source"] = probability_source_for_snapshot
+        sim["probabilistic"] = probabilistic_for_snapshot
 
         record_forward_snapshot(
             city_name=city_name,
@@ -961,21 +1107,11 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
             bracket_probs=bracket_probs,
             probability_source=probability_source_for_snapshot,
             probabilistic=probabilistic_for_snapshot,
+            action=sim.get("action"),
+            predicted_bracket=sim.get("predicted_bracket"),
+            ask=sim.get("ask"),
+            edge_after_costs=sim.get("edge_after_costs"),
         )
-
-        sim = _build_forward_trade_decision(
-            city_name=city_name,
-            date_str=date_str,
-            brackets=brackets,
-            prices=prices,
-            books=books,
-            forecast_max_market=float(forecast["max_temp_market"]),
-            predicted_bracket=predicted,
-        )
-        if predicted and bracket_probs:
-            sim["predicted_prob"] = round(float(bracket_probs.get(predicted, 0.0)), 4)
-        sim["probability_source"] = probability_source_for_snapshot
-        sim["probabilistic"] = probabilistic_for_snapshot
 
         log.info(
             "%s %s: Tomorrow max %.1f%s -> %s (p=%s) | action=%s ask=%.3f spread=%.3f",
@@ -1006,8 +1142,9 @@ async def process_city_forward(city_key: str, city: dict, date_str: str) -> dict
             status="ok",
         )
 
-        result["signals"] = 1 if sim.get("bracket") else 0
-        result["trades"] = 1 if sim.get("action") in ("enter", "reenter_on_change") else 0
+        actionable = sim.get("action") in ("enter", "reenter_on_change", "switch")
+        result["signals"] = 1 if actionable else 0
+        result["trades"] = 1 if actionable else 0
         result["status"] = "ok"
         return result
 

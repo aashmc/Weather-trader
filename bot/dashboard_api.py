@@ -358,13 +358,22 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
         ):
             bp = nyc_prob_engine.get("bracket_probs") or {}
             if bp:
-                raw_probs = {str(k): float(v) for k, v in bp.items()}
-                corrected_probs = dict(raw_probs)
-                predicted = nyc_prob_engine.get("predicted_bracket")
-                dist_market_out = {
+                nyc_dist = {
                     int(k): float(v)
                     for k, v in (nyc_prob_engine.get("degree_dist_f") or {}).items()
                 }
+                cal_dist, nyc_cal_meta = apply_forward_error_calibration(
+                    city_name=city["name"],
+                    lead_bucket=lead_bucket,
+                    dist_market=nyc_dist,
+                )
+                dist_market_out = cal_dist or nyc_dist
+                raw_probs = map_to_brackets(dist_market_out, brackets)
+                s = sum(raw_probs.values())
+                if s > 0:
+                    raw_probs = {k: v / s for k, v in raw_probs.items()}
+                corrected_probs = dict(raw_probs)
+                predicted = max(corrected_probs, key=corrected_probs.get) if corrected_probs else None
                 max_temp_market_out = nyc_prob_engine.get("expected_max_f")
                 ensemble_mean_out = float(max_temp_market_out or ensemble_mean_out)
                 ensemble_count_out = int(nyc_prob_engine.get("source_count") or 0)
@@ -372,12 +381,13 @@ async def _build_dashboard_snapshot_async(city_key: str, date_str: str) -> dict:
                 probabilistic_out = True
                 conditioning_source = "nyc_prob_engine"
                 calibration_meta = {
-                    "used": False,
-                    "reason": "nyc_prob_engine",
-                    "samples": ensemble_count_out,
-                    "mean_error": 0.0,
-                    "sd_error": 0.0,
+                    "used": bool(nyc_cal_meta.get("used", False)),
+                    "reason": str(nyc_cal_meta.get("reason", "nyc_prob_engine")),
+                    "samples": int(nyc_cal_meta.get("samples", 0)),
+                    "mean_error": float(nyc_cal_meta.get("mean_error", 0.0)),
+                    "sd_error": float(nyc_cal_meta.get("sd_error", 0.0)),
                     "bucket": lead_bucket,
+                    "source_count": ensemble_count_out,
                 }
 
         favorite = _favorite_label(brackets, prices, books_raw or {})

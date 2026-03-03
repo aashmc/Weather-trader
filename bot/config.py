@@ -204,6 +204,29 @@ NYC_PROB_SIGMA_F = {
     "ecmwf_ens": 1.35,
 }
 
+# NYC forward execution policy (shadow/live-decision guardrails).
+NYC_FORWARD_POLICY_ENABLED = os.getenv(
+    "NYC_FORWARD_POLICY_ENABLED", "true"
+).strip().lower() in ("1", "true", "yes", "on")
+NYC_FORWARD_MIN_MODEL_PROB = max(
+    0.0, min(1.0, float(os.getenv("NYC_FORWARD_MIN_MODEL_PROB", "0.20")))
+)
+NYC_FORWARD_MIN_EDGE = max(
+    0.0, min(0.50, float(os.getenv("NYC_FORWARD_MIN_EDGE", "0.02")))
+)
+NYC_FORWARD_MAX_SPREAD = max(
+    0.0, min(0.50, float(os.getenv("NYC_FORWARD_MAX_SPREAD", "0.08")))
+)
+NYC_FORWARD_SPREAD_PENALTY_MULT = max(
+    0.0, min(1.0, float(os.getenv("NYC_FORWARD_SPREAD_PENALTY_MULT", "0.35")))
+)
+NYC_FORWARD_SWITCH_EDGE_BUFFER = max(
+    0.0, min(0.50, float(os.getenv("NYC_FORWARD_SWITCH_EDGE_BUFFER", "0.01")))
+)
+NYC_FORWARD_SWITCH_COOLDOWN_MINUTES = max(
+    0, int(os.getenv("NYC_FORWARD_SWITCH_COOLDOWN_MINUTES", "60"))
+)
+
 # ══════════════════════════════════════════════════════
 # ROLLING CALIBRATION (ITEM #3)
 # ══════════════════════════════════════════════════════
@@ -623,6 +646,13 @@ def get_runtime_effective() -> dict:
         "nyc_prob_use_in_forward": NYC_PROB_USE_IN_FORWARD,
         "nyc_prob_weights": dict(NYC_PROB_WEIGHTS),
         "nyc_prob_sigma_f": dict(NYC_PROB_SIGMA_F),
+        "nyc_forward_policy_enabled": NYC_FORWARD_POLICY_ENABLED,
+        "nyc_forward_min_model_prob": NYC_FORWARD_MIN_MODEL_PROB,
+        "nyc_forward_min_edge": NYC_FORWARD_MIN_EDGE,
+        "nyc_forward_max_spread": NYC_FORWARD_MAX_SPREAD,
+        "nyc_forward_spread_penalty_mult": NYC_FORWARD_SPREAD_PENALTY_MULT,
+        "nyc_forward_switch_edge_buffer": NYC_FORWARD_SWITCH_EDGE_BUFFER,
+        "nyc_forward_switch_cooldown_minutes": NYC_FORWARD_SWITCH_COOLDOWN_MINUTES,
         "city_thresholds": {
             city_key: {
                 "min_models": cfg.get("min_models"),

@@ -126,6 +126,10 @@ def record_forward_snapshot(
     bracket_probs: dict[str, float],
     probability_source: str,
     probabilistic: bool,
+    action: str | None = None,
+    predicted_bracket: str | None = None,
+    ask: float | None = None,
+    edge_after_costs: float | None = None,
 ):
     state = _load_state()
     key = f"{city_name}:{date_str}"
@@ -166,7 +170,7 @@ def record_forward_snapshot(
     hour_idx = max(0, int((now_dt - opened_dt).total_seconds() // 3600))
 
     probs = _normalize_probs(bracket_probs)
-    predicted = max(probs, key=probs.get) if probs else ""
+    predicted = str(predicted_bracket or (max(probs, key=probs.get) if probs else ""))
     predicted_prob = float(probs.get(predicted, 0.0)) if predicted else 0.0
     hour_key = str(hour_idx)
     if hour_key not in series.setdefault("hours", {}):
@@ -183,6 +187,13 @@ def record_forward_snapshot(
             ),
             "predicted_bracket": predicted,
             "predicted_prob": predicted_prob,
+            "ask": (
+                None if ask is None else float(ask)
+            ),
+            "edge_after_costs": (
+                None if edge_after_costs is None else float(edge_after_costs)
+            ),
+            "action": str(action or ""),
             "probability_source": str(probability_source or ""),
             "probabilistic": bool(probabilistic),
         }
@@ -308,6 +319,10 @@ async def record_forward_resolution(
     series = state.get("market_series", {}).get(key, {}) or {}
     hourly_map = series.get("hours", {}) if isinstance(series, dict) else {}
     hourly_eval = []
+    sim_pnl = 0.0
+    sim_trades = 0
+    switch_count = 0
+    prev_pred = None
     for hk, hv in sorted(
         (hourly_map or {}).items(),
         key=lambda kv: int(kv[0]) if str(kv[0]).isdigit() else 10**9,
@@ -317,6 +332,9 @@ async def record_forward_resolution(
         pred = str(hv.get("predicted_bracket", "") or "")
         h = int(hv.get("hour_since_open", int(hk) if str(hk).isdigit() else 0))
         pp = float(hv.get("predicted_prob", 0.0) or 0.0)
+        ask = hv.get("ask")
+        action = str(hv.get("action", "") or "")
+        edge_after_costs = hv.get("edge_after_costs")
         row = {
             "market_key": key,
             "city": city_name,
@@ -326,6 +344,9 @@ async def record_forward_resolution(
             "snapshot_ts": str(hv.get("timestamp", "")),
             "predicted_bracket": pred,
             "predicted_prob": pp,
+            "ask": ask,
+            "action": action,
+            "edge_after_costs": edge_after_costs,
             "hit": bool(pred and pred == winner),
             "probability_source": str(hv.get("probability_source", "") or ""),
             "probabilistic": bool(hv.get("probabilistic", False)),
@@ -333,7 +354,28 @@ async def record_forward_resolution(
         hourly_eval.append(row)
         _append_jsonl(HOURLY_LOG_FILE, row)
 
+        if prev_pred is not None and pred and pred != prev_pred:
+            switch_count += 1
+        if pred:
+            prev_pred = pred
+
+        ask_f = None
+        try:
+            ask_f = float(ask) if ask is not None else None
+        except (TypeError, ValueError):
+            ask_f = None
+
+        if ask_f is not None and action in ("enter", "reenter_on_change", "switch"):
+            sim_trades += 1
+            if pred == winner:
+                sim_pnl += (1.0 - ask_f)
+            else:
+                sim_pnl -= ask_f
+
     rec["hourly_points"] = len(hourly_eval)
+    rec["switch_count"] = int(switch_count)
+    rec["sim_trades_1x"] = int(sim_trades)
+    rec["sim_pnl_1x"] = float(sim_pnl)
     if hourly_eval:
         h0 = min(hourly_eval, key=lambda r: int(r.get("hour_since_open", 0)))
         hl = max(hourly_eval, key=lambda r: int(r.get("hour_since_open", 0)))
@@ -456,6 +498,9 @@ def build_daily_report_message(now_utc: datetime | None = None) -> dict | None:
         winner_prob_avg = sum(float(r.get("winner_prob", 0.0)) for r in rows) / n
         abs_errors = [abs(float(r.get("error"))) for r in rows if r.get("error") is not None]
         mae = (sum(abs_errors) / len(abs_errors)) if abs_errors else None
+        sim_pnl = sum(float(r.get("sim_pnl_1x", 0.0) or 0.0) for r in rows)
+        sim_trades = sum(int(r.get("sim_trades_1x", 0) or 0) for r in rows)
+        switch_count = sum(int(r.get("switch_count", 0) or 0) for r in rows)
 
         by_city: dict[str, list] = {}
         for r in rows:
@@ -471,18 +516,31 @@ def build_daily_report_message(now_utc: datetime | None = None) -> dict | None:
             cwp = sum(float(x.get("winner_prob", 0.0)) for x in cr) / cn
             cerr = [abs(float(x.get("error"))) for x in cr if x.get("error") is not None]
             cmae = (sum(cerr) / len(cerr)) if cerr else None
+            csim_pnl = sum(float(x.get("sim_pnl_1x", 0.0) or 0.0) for x in cr)
+            csim_trades = sum(int(x.get("sim_trades_1x", 0) or 0) for x in cr)
+            cswitch = sum(int(x.get("switch_count", 0) or 0) for x in cr)
             mae_str = f"{cmae:.2f}" if cmae is not None else "n/a"
             city_lines.append(
-                f"  - {city}: {ch}/{cn} top-pick, avg winner p={cwp*100:.1f}%, MAE={mae_str}"
+                f"  - {city}: {ch}/{cn} top-pick, avg winner p={cwp*100:.1f}%, "
+                f"MAE={mae_str}, simPnL={csim_pnl:+.2f} ({csim_trades} trades), switches={cswitch}"
             )
 
         mae_str = f"{mae:.2f}" if mae is not None else "n/a"
+        gate_pass = bool(
+            (hit / n) >= 0.55
+            and sim_pnl >= 0.0
+            and (mae is None or mae <= 2.5)
+        )
+        gate_text = "PASS (ready for small live NYC notional)" if gate_pass else "HOLD (keep shadow testing)"
         message = (
             f"📘 <b>Forward Test Daily Update ({report_day} UTC)</b>\n"
             f"  Resolved: {n}\n"
             f"  Top-pick hit rate: {hit}/{n} ({(hit/n)*100:.1f}%)\n"
             f"  Avg winner probability: {winner_prob_avg*100:.1f}%\n"
             f"  MAE (forecast max vs actual): {mae_str}\n"
+            f"  Sim PnL (1x entry-only): {sim_pnl:+.2f} over {sim_trades} trades\n"
+            f"  Bracket switches: {switch_count}\n"
+            f"  NYC gate: {gate_text}\n"
             f"  <b>City inference:</b>\n"
             + "\n".join(city_lines)
         )
@@ -493,6 +551,10 @@ def build_daily_report_message(now_utc: datetime | None = None) -> dict | None:
             "hit_rate": hit / n if n else 0.0,
             "avg_winner_prob": winner_prob_avg,
             "mae": mae,
+            "sim_pnl_1x": sim_pnl,
+            "sim_trades_1x": sim_trades,
+            "switch_count": switch_count,
+            "gate_pass": gate_pass,
         }
 
     # Add cumulative hourly hit-rate summary (hour since market-open).
